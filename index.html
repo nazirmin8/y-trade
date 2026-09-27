@@ -171,13 +171,35 @@ function scheduleAutoSync(){
 }
 async function runAutoSync(){
   if(autoSyncRunning||!autoSyncPending)return;
+
+  if(typeof window.yTradeSync!=='function' || !window.yTradeFirebase || !fbUser || !fbProfile){
+    // Firebase/authentification pas encore prête : on conserve la demande
+    // et on réessaie dès que la session est disponible.
+    clearTimeout(autoSyncMaxTimer);
+    autoSyncMaxTimer=null;
+    clearTimeout(autoSyncTimer);
+    autoSyncTimer=setTimeout(runAutoSync,1000);
+    return;
+  }
+
   autoSyncPending=false;
   clearTimeout(autoSyncMaxTimer);
   autoSyncMaxTimer=null;
-  if(typeof window.yTradeSync!=='function')return;
+  clearTimeout(autoSyncTimer);
+  autoSyncTimer=null;
+
   autoSyncRunning=true;
   try{
-    await window.yTradeSync({silent:true,auto:true});
+    const ok=await window.yTradeSync({silent:true,auto:true});
+    if(!ok){
+      // Une erreur réseau ou Firebase ne doit pas faire disparaître la demande.
+      autoSyncPending=true;
+      autoSyncTimer=setTimeout(runAutoSync,2000);
+    }
+  }catch(err){
+    console.error('Auto-synchronisation:',err);
+    autoSyncPending=true;
+    autoSyncTimer=setTimeout(runAutoSync,2000);
   }finally{
     autoSyncRunning=false;
   }
@@ -814,6 +836,7 @@ let fbReady=false;
 let fbUser=null;
 let fbProfile=null;
 let fbGuest=false;
+let autoLoadDone=false;
 
 const ROLES=['Administrateur','Ventes','Achats','Comptabilité'];
 
@@ -1011,6 +1034,14 @@ function initFirebaseAuth(){
           ui.v=DEFV[fbProfile.role]||'dash';
           ui.arm='';
 
+          // Charger automatiquement la dernière version cloud au démarrage,
+          // uniquement si elle est plus récente que la dernière version locale connue.
+          await autoLoadFromFirestore();
+
+          // Si une modification a été faite avant que Firebase soit prêt,
+          // relancer la synchronisation automatique dès que la session est disponible.
+          if(autoSyncPending) scheduleAutoSync();
+
         }else{
 
           fbReady=true;
@@ -1020,6 +1051,7 @@ function initFirebaseAuth(){
 
         fbUser=null;
         fbProfile=null;
+        autoLoadDone=false;
         fbReady=true;
 
         try{
@@ -1724,10 +1756,15 @@ window.yTradeSync=async function(options={}){
     await f.setDoc(ref,{
       data,
       updatedAt:f.serverTimestamp(),
+      clientUpdatedAt:Date.now(),
       updatedBy:fbUser.uid,
       updatedByEmail:fbUser.email||'',
       version:1
     });
+
+    try{
+      localStorage.setItem('comptoir_last_cloud_sync_at',String(Date.now()));
+    }catch(e){}
 
     if(!silent)toast(options&&options.auto?'☁️ Synchronisation automatique effectuée':'☁️ Données synchronisées avec Firestore');
     console.log('☁️ Y-TRADE synchronisé avec Firestore',{
@@ -1749,6 +1786,80 @@ window.yTradeSync=async function(options={}){
     return false;
   }
 };
+
+async function autoLoadFromFirestore(){
+
+  if(autoLoadDone)return false;
+  autoLoadDone=true;
+
+  const f=FB();
+
+  if(!f || !f.db || !fbUser || !fbProfile) return false;
+  if(fbProfile.actif===false || fbProfile.role!=='Administrateur') return false;
+
+  try{
+    const ref=f.doc(f.db,'companies','y-trade','state','main');
+    const snap=await f.getDoc(ref);
+
+    if(!snap.exists())return false;
+
+    const cloud=snap.data()||{};
+    const incoming=cloud.data;
+
+    if(!incoming || !Array.isArray(incoming.products) || !Array.isArray(incoming.sales) || !Array.isArray(incoming.purchases)){
+      console.warn('Auto-chargement ignoré : données Firestore invalides.');
+      return false;
+    }
+
+    const cloudTime=Number(cloud.clientUpdatedAt||0);
+    const localTime=Number(localStorage.getItem('comptoir_last_cloud_sync_at')||0);
+
+    // Si aucune date locale n'est connue, le cloud devient la référence au démarrage.
+    // Sinon, on ne remplace le local que si le cloud est plus récent.
+    if(localTime && cloudTime && cloudTime<=localTime){
+      return false;
+    }
+
+    try{
+      localStorage.setItem('comptoir_before_auto_cloud_load',JSON.stringify(S));
+    }catch(e){
+      console.warn('Sauvegarde locale avant auto-chargement impossible:',e);
+    }
+
+    const base=fresh();
+    S=Object.assign(base,JSON.parse(JSON.stringify(incoming)));
+
+    ['products','clients','suppliers','sales','purchases','expenses','mv'].forEach(k=>{
+      if(!Array.isArray(S[k]))S[k]=[];
+    });
+
+    if(!Number.isFinite(+S.n)){
+      const ids=[...S.products,...S.clients,...S.suppliers,...S.sales,...S.purchases,...S.expenses,...(S.staff||[])].map(x=>+x.id||0);
+      S.n=Math.max(1,...ids)+1;
+    }
+
+    try{
+      localStorage.setItem(KEY,JSON.stringify(S));
+      localStorage.setItem('comptoir_last_cloud_sync_at',String(cloudTime||Date.now()));
+    }catch(e){
+      console.warn('Sauvegarde locale après auto-chargement impossible:',e);
+    }
+
+    render();
+
+    console.log('☁️ Auto-chargement Y-TRADE effectué',{
+      clientUpdatedAt:cloud.clientUpdatedAt||null,
+      updatedBy:cloud.updatedBy||'',
+      version:cloud.version||1
+    });
+
+    return true;
+
+  }catch(err){
+    console.warn('Auto-chargement Firestore ignoré:',err);
+    return false;
+  }
+}
 
 window.yTradeLoad=async function(){
 
