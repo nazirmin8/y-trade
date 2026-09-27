@@ -150,7 +150,46 @@ const daysAgo=n=>addDays(today,-n),by=(a,i)=>a.find(x=>x.id==i)||{};
 const MODES=['Espèces','Banque','Mobile Money'],CH=['Loyer','Salaires','Transport','Électricité et eau','Communication','Autres'];
 let S,ui={v:'dash',p:'month',mode:'simple',arm:''};
 function fresh(){return{n:1,products:[],clients:[],suppliers:[],sales:[],purchases:[],expenses:[],mv:[]}}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}// =========================================================
+let autoSyncTimer=null,autoSyncMaxTimer=null,autoSyncPending=false,autoSyncRunning=false;
+const AUTO_SYNC_DELAY=8000;
+const AUTO_SYNC_MAX=10000;
+function scheduleAutoSync(){
+  autoSyncPending=true;
+  clearTimeout(autoSyncTimer);
+  autoSyncTimer=setTimeout(()=>{
+    autoSyncTimer=null;
+    runAutoSync();
+  },AUTO_SYNC_DELAY);
+  if(!autoSyncMaxTimer){
+    autoSyncMaxTimer=setTimeout(()=>{
+      autoSyncMaxTimer=null;
+      clearTimeout(autoSyncTimer);
+      autoSyncTimer=null;
+      runAutoSync();
+    },AUTO_SYNC_MAX);
+  }
+}
+async function runAutoSync(){
+  if(autoSyncRunning||!autoSyncPending)return;
+  autoSyncPending=false;
+  clearTimeout(autoSyncMaxTimer);
+  autoSyncMaxTimer=null;
+  if(typeof window.yTradeSync!=='function')return;
+  autoSyncRunning=true;
+  try{
+    await window.yTradeSync({silent:true,auto:true});
+  }finally{
+    autoSyncRunning=false;
+  }
+}
+function save(){
+  try{
+    localStorage.setItem(KEY,JSON.stringify(S));
+    scheduleAutoSync();
+  }catch(e){
+    console.warn('Sauvegarde locale impossible:',e);
+  }
+}// =========================================================
 // ☁️ SYNCHRONISATION FIRESTORE — V2
 // =========================================================
 const FIRESTORE_COMPANY='y-trade';
@@ -1642,22 +1681,23 @@ if(window.yTradeFirebase){
 // ---------------------------------------------------------
 // Synchronisation Firestore — exposée au module principal
 // ---------------------------------------------------------
-window.yTradeSync=async function(){
+window.yTradeSync=async function(options={}){
 
+  const silent=options&&options.silent===true;
   const f=FB();
 
   if(!f || !f.db || !fbUser || !fbProfile){
-    toast('⚠️ Connexion Firebase requise.');
+    if(!silent)toast('⚠️ Connexion Firebase requise.');
     return false;
   }
 
   if(fbProfile.actif===false){
-    toast('⚠️ Compte désactivé.');
+    if(!silent)toast('⚠️ Compte désactivé.');
     return false;
   }
 
   if(fbProfile.role!=='Administrateur'){
-    toast('🔒 Synchronisation réservée à l’administrateur.');
+    if(!silent)toast('🔒 Synchronisation réservée à l’administrateur.');
     return false;
   }
 
@@ -1668,7 +1708,7 @@ window.yTradeSync=async function(){
     const size=new Blob([json]).size;
 
     if(size>900000){
-      toast('⚠️ Données trop volumineuses pour cette première synchronisation.');
+      if(!silent)toast('⚠️ Données trop volumineuses pour cette première synchronisation.');
       console.warn('Taille Firestore:',size,'octets');
       return false;
     }
@@ -1689,7 +1729,7 @@ window.yTradeSync=async function(){
       version:1
     });
 
-    toast('☁️ Données synchronisées avec Firestore');
+    if(!silent)toast(options&&options.auto?'☁️ Synchronisation automatique effectuée':'☁️ Données synchronisées avec Firestore');
     console.log('☁️ Y-TRADE synchronisé avec Firestore',{
       size,
       user:fbUser.uid
@@ -1701,7 +1741,7 @@ window.yTradeSync=async function(){
 
     console.error('Erreur synchronisation Firestore:',err);
 
-    toast(
+    if(!silent)toast(
       '❌ Synchronisation impossible. '+
       (err&&err.message?err.message:'')
     );
