@@ -637,23 +637,31 @@ if(d.rr&&db){if(ui.arm!='rr'+d.rr){ui.arm='rr'+d.rr;b.textContent='Confirmer ?';
 $('#rb').insertAdjacentHTML('afterend','<button class="ghost" data-bk="save" title="Télécharger une sauvegarde complète (JSON)">💾 Sauvegarde</button><button class="ghost" data-bk="load" title="Restaurer depuis une sauvegarde JSON">♻️ Restaurer</button><button class="ghost" data-cloud="sync" title="Synchroniser les données avec Firestore">☁️ Synchroniser</button><button class="ghost" data-cloud="load" title="Charger les données depuis Firestore">☁️ Charger</button><input type="file" id="bkf" accept=".json" hidden>');
 document.addEventListener('click',e=>{const b=e.target.closest('[data-bk]');if(!b)return;if(b.dataset.bk=='save'){download('sauvegarde-y-trade-services-'+today+'.json',JSON.stringify(S,null,2),'application/json');toast('💾 Sauvegarde générée')}else if(adm())$('#bkf').click();else toast('Réservé à l’administrateur.')});
 $('#bkf').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;const fr=new FileReader();fr.onload=()=>{try{const o=JSON.parse(fr.result);if(!o.products||!o.sales||!o.purchases)throw 0;S=o;save();render();toast('✅ Sauvegarde restaurée (↩️ pour annuler)')}catch(x){toast('Fichier de sauvegarde invalide.')}e.target.value=''};fr.readAsText(f)});document.addEventListener('click',async e=>{
-  const b=e.target.closest('[data-cloud="sync"]');
+  const b=e.target.closest('[data-cloud]');
   if(!b)return;
+
+  const action=b.dataset.cloud;
+  if(action!=='sync'&&action!=='load')return;
 
   if(b.disabled)return;
 
+  if(action==='load'){
+    if(!confirm('⚠️ Charger les données depuis Firestore va remplacer les données actuellement ouvertes dans ce navigateur.\n\nUne sauvegarde locale sera créée automatiquement avant le chargement.\n\nContinuer ?'))return;
+  }
+
   b.disabled=true;
   const old=b.textContent;
-  b.textContent='⏳ Synchronisation...';
+  b.textContent=action==='load'?'⏳ Chargement...':'⏳ Synchronisation...';
 
   try{
-    if(typeof window.yTradeSync !== 'function'){
-      throw new Error('Le module de synchronisation Firebase n’est pas chargé.');
+    const fn=action==='load'?window.yTradeLoad:window.yTradeSync;
+    if(typeof fn!=='function'){
+      throw new Error('Le module Firebase n’est pas chargé.');
     }
-    await window.yTradeSync();
+    await fn();
   }catch(err){
-    console.error('Erreur bouton synchronisation:',err);
-    toast('❌ Synchronisation impossible. '+(err&&err.message?err.message:'Erreur inconnue'));
+    console.error('Erreur opération Firestore:',err);
+    toast('❌ Opération impossible. '+(err&&err.message?err.message:'Erreur inconnue'));
   }finally{
     b.disabled=false;
     b.textContent=old;
@@ -1698,6 +1706,79 @@ window.yTradeSync=async function(){
       (err&&err.message?err.message:'')
     );
 
+    return false;
+  }
+};
+
+window.yTradeLoad=async function(){
+
+  const f=FB();
+
+  if(!f || !f.db || !fbUser || !fbProfile){
+    toast('⚠️ Connexion Firebase requise.');
+    return false;
+  }
+
+  if(fbProfile.actif===false){
+    toast('⚠️ Compte désactivé.');
+    return false;
+  }
+
+  if(fbProfile.role!=='Administrateur'){
+    toast('🔒 Chargement réservé à l’administrateur.');
+    return false;
+  }
+
+  try{
+    const ref=f.doc(f.db,'companies','y-trade','state','main');
+    const snap=await f.getDoc(ref);
+
+    if(!snap.exists()){
+      toast('⚠️ Aucune sauvegarde cloud trouvée.');
+      return false;
+    }
+
+    const cloud=snap.data();
+    const incoming=cloud&&cloud.data;
+
+    if(!incoming || !Array.isArray(incoming.products) || !Array.isArray(incoming.sales) || !Array.isArray(incoming.purchases)){
+      throw new Error('Les données Firestore sont invalides.');
+    }
+
+    try{
+      localStorage.setItem('comptoir_before_cloud_load',JSON.stringify(S));
+    }catch(e){
+      console.warn('Sauvegarde locale avant chargement impossible:',e);
+    }
+
+    const base=fresh();
+    S=Object.assign(base,JSON.parse(JSON.stringify(incoming)));
+
+    ['products','clients','suppliers','sales','purchases','expenses','mv'].forEach(k=>{
+      if(!Array.isArray(S[k]))S[k]=[];
+    });
+
+    if(!Number.isFinite(+S.n)){
+      const ids=[...S.products,...S.clients,...S.suppliers,...S.sales,...S.purchases,...S.expenses,...(S.staff||[])].map(x=>+x.id||0);
+      S.n=Math.max(1,...ids)+1;
+    }
+
+    save();
+    render();
+
+    toast('☁️ Données chargées depuis Firestore');
+
+    console.log('☁️ Y-TRADE chargé depuis Firestore',{
+      updatedAt:cloud.updatedAt||null,
+      updatedBy:cloud.updatedBy||'',
+      version:cloud.version||1
+    });
+
+    return true;
+
+  }catch(err){
+    console.error('Erreur chargement Firestore:',err);
+    toast('❌ Chargement impossible. '+(err&&err.message?err.message:'Erreur inconnue'));
     return false;
   }
 };
