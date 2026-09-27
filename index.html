@@ -570,7 +570,24 @@ if(d.rs&&db){const s=[...document.querySelectorAll('select[data-ro]')].find(x=>x
 if(d.rr&&db){if(ui.arm!='rr'+d.rr){ui.arm='rr'+d.rr;b.textContent='Confirmer ?';return}ui.arm='';delete roles[d.rr];try{await db.doc('app/roles').set(roles);toast('Accès retiré')}catch(x){toast('Erreur.')}}});
 $('#rb').insertAdjacentHTML('afterend','<button class="ghost" data-bk="save" title="Télécharger une sauvegarde complète (JSON)">💾 Sauvegarde</button><button class="ghost" data-bk="load" title="Restaurer depuis une sauvegarde JSON">♻️ Restaurer</button><input type="file" id="bkf" accept=".json" hidden>');
 document.addEventListener('click',e=>{const b=e.target.closest('[data-bk]');if(!b)return;if(b.dataset.bk=='save'){download('sauvegarde-y-trade-services-'+today+'.json',JSON.stringify(S,null,2),'application/json');toast('💾 Sauvegarde générée')}else if(adm())$('#bkf').click();else toast('Réservé à l’administrateur.')});
-$('#bkf').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;const fr=new FileReader();fr.onload=()=>{try{const o=JSON.parse(fr.result);if(!o.products||!o.sales||!o.purchases)throw 0;S=o;save();render();toast('✅ Sauvegarde restaurée (↩️ pour annuler)')}catch(x){toast('Fichier de sauvegarde invalide.')}e.target.value=''};fr.readAsText(f)});
+$('#bkf').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;const fr=new FileReader();fr.onload=()=>{try{const o=JSON.parse(fr.result);if(!o.products||!o.sales||!o.purchases)throw 0;S=o;save();render();toast('✅ Sauvegarde restaurée (↩️ pour annuler)')}catch(x){toast('Fichier de sauvegarde invalide.')}e.target.value=''};
+ fr.readAsText(f)});document.addEventListener('click',async e=>{
+  const b=e.target.closest('[data-cloud="sync"]');
+  if(!b)return;
+
+  if(b.disabled)return;
+
+  b.disabled=true;
+  const old=b.textContent;
+  b.textContent='⏳ Synchronisation...';
+
+  try{
+    await syncToFirestore();
+  }finally{
+    b.disabled=false;
+    b.textContent=old;
+  }
+});
 // ---- modification & suppression (tous les modules de saisie)
 const CL={s:'sales',p:'purchases',e:'expenses',pr:'products',c:'clients',f:'suppliers',st:'staff'},EDV=['sales','purchases','expenses','products','clients','suppliers','staff'];
 const remMv=(re,i)=>{S.mv=S.mv.filter(m=>{const g=re.exec(m.label);return!(g&&+g[1]==i)})};
