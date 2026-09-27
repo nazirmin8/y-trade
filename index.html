@@ -90,16 +90,6 @@ button{transition:transform .1s}button:active{transform:scale(.96)}td.nx button{
 </div>
 <div id="toast" role="status"></div>
 <script type="application/json" id="y-trade-backup">{"v":1,"savedAt":"2026-09-26T21:26:58.995Z","data":{"n":1,"products":[],"clients":[],"suppliers":[],"sales":[],"purchases":[],"expenses":[],"mv":[],"impLock":true,"staff":[],"numv":2,"entryLock":false,"mailBk":"","snaps":[],"accounts":[],"modPins":{}},"theme":{"c":2,"d":"light"}}</script>
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, serverTimestamp, collection, addDoc, onSnapshot, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
-const firebaseConfig={apiKey:"AIzaSyAAlunHBOssaZemHJ0LzyFqqWFjUpqf-Jk",authDomain:"y-trade.firebaseapp.com",projectId:"y-trade",storageBucket:"y-trade.firebasestorage.app",messagingSenderId:"594448522138",appId:"1:594448522138:web:cd3985bf190b778a193823"};
-const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app);
-window.yTradeFirebase={app,auth,db,signInWithEmailAndPassword,signOut,onAuthStateChanged,doc,getDoc,setDoc,serverTimestamp,collection,addDoc,onSnapshot,query,orderBy,limit};
-window.dispatchEvent(new Event('ytrade-firebase-ready'));
-</script>
-
 <script>
 // ---- squelette d'origine (pour la sauvegarde HTML complète)
 const SRC0=(()=>{const h=[...document.head.children].filter(n=>/^(TITLE|LINK|STYLE)$/.test(n.tagName)||(n.tagName=='META'&&!n.httpEquiv)).map(n=>n.outerHTML).join('\n');return{lang:document.documentElement.lang||'fr',head:h,body:['.app','#toast'].map(q=>document.querySelector(q).outerHTML).join('\n')}})();
@@ -955,58 +945,270 @@ bn.style.cssText='position:fixed;left:12px;right:12px;bottom:calc(12px + env(saf
 bn.innerHTML='<span style="flex:1 1 260px">🌐 Ce fichier contient une sauvegarde'+esc(dt)+'. Les données de ce navigateur sont différentes.</span><button data-yb="apply">Restaurer cette sauvegarde</button><button class="ghost" data-yb="skip">Garder mes données</button>';document.body.appendChild(bn)}}
 })();
 </script>
+<script type="module" id="ytrade-firebase-module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+import { getFirestore, doc, getDoc, setDoc, serverTimestamp, collection, addDoc, onSnapshot, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+
+const firebaseConfig={
+  apiKey:"AIzaSyAAlunHBOssaZemHJ0LzyFqqWFjUpqf-Jk",
+  authDomain:"y-trade.firebaseapp.com",
+  projectId:"y-trade",
+  storageBucket:"y-trade.firebasestorage.app",
+  messagingSenderId:"594448522138",
+  appId:"1:594448522138:web:cd3985bf190b778a193823"
+};
+const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app);
+window.yTradeFirebase={app,auth,db,signInWithEmailAndPassword,signOut,onAuthStateChanged,doc,getDoc,setDoc,serverTimestamp,collection,addDoc,onSnapshot,query,orderBy,limit};
+window.dispatchEvent(new Event('ytrade-firebase-ready'));
+</script>
 <script>
 // =============================================================
-// Y-TRADE V2 — EVOLUTIONS COMPLETES SUR BASE DU FICHIER FOURNI
+// Y-TRADE V2 — intégration des évolutions sur le fichier maître
+// Aucun module/interface du fichier source n'est supprimé.
 // =============================================================
 (()=>{
 'use strict';
-const FB=()=>window.yTradeFirebase||null,CLOUD_DOC=['companies','y-trade','state','main'],MSG_PATH=['companies','y-trade','messages'];
-const SYNC_DELAY=8000,SYNC_MAX=10000,RETRY_MS=2000,META_KEY='yt_cloud_meta_v2',DIRTY_KEY='yt_cloud_dirty_v2',LOCAL_BACKUP_KEY='comptoir_before_cloud_load';
-let fbReady=false,fbUser=null,fbProfile=null,guest=false,bootDone=false,bootRunning=false,cloudLoading=false,firstDirtyAt=0,syncTimer=null,maxTimer=null,conflict=false,msgUnsub=null,messages=[];
-const ROLE_IC={Administrateur:'🔐',Ventes:'🛒',Achats:'📦','Comptabilité':'🧮'},DEFV={Administrateur:'dash',Ventes:'sales',Achats:'purchases','Comptabilité':'tre'};
-const ACCESS={Administrateur:null,Ventes:new Set(['dash','sales','clients','products','stock','rec','rap','docs','inv','objp','messages','aide']),Achats:new Set(['dash','purchases','suppliers','products','stock','det','rap','docs','inv','messages','aide']),Comptabilité:new Set(['dash','expenses','staff','tre','rec','det','pnl','rent','rap','dir','docs','budget','scenario','objp','messages','aide'])};
-const localSave=save;
-save=function(){localSave();if(cloudLoading||!bootDone||guest)return;try{localStorage.setItem(DIRTY_KEY,'1')}catch(e){}scheduleAutoSync()};
-function meta(){try{return JSON.parse(localStorage.getItem(META_KEY)||'{}')||{}}catch(e){return{}}}
-function setMeta(x){try{localStorage.setItem(META_KEY,JSON.stringify(x))}catch(e){}}
-function dirty(){try{return localStorage.getItem(DIRTY_KEY)==='1'}catch(e){return false}}
-function clearDirty(){try{localStorage.removeItem(DIRTY_KEY)}catch(e){}}
-function remoteMs(c){if(!c)return 0;if(Number.isFinite(+c.updatedAtMs))return+c.updatedAtMs;try{return c.updatedAt&&typeof c.updatedAt.toMillis==='function'?c.updatedAt.toMillis():0}catch(e){return 0}}
-function norm(x){if(!x||!Array.isArray(x.products)||!Array.isArray(x.sales)||!Array.isArray(x.purchases))throw Error('Les données cloud sont invalides.');S=Object.assign(fresh(),JSON.parse(JSON.stringify(x)));['products','clients','suppliers','sales','purchases','expenses','mv'].forEach(k=>{if(!Array.isArray(S[k]))S[k]=[]});if(typeof fix==='function')try{fix()}catch(e){}if(!Number.isFinite(+S.n)){const a=[...S.products,...S.clients,...S.suppliers,...S.sales,...S.purchases,...S.expenses,...(S.staff||[])];S.n=Math.max(1,...a.map(o=>+o.id||0))+1}}
-function ferr(e){const c=e&&e.code||'';if(c.includes('permission-denied'))return'Accès Firestore refusé par les règles de sécurité.';if(c.includes('unauthenticated'))return'Session Firebase expirée.';if(c.includes('unavailable')||c.includes('failed-precondition'))return'Firestore est temporairement indisponible.';if(c.includes('network'))return'Connexion Internet indisponible.';return e&&e.message||'Erreur Firebase inconnue.'}
-function loginPanel(){return`<div class="login-wrap"><div class="login-card"><div class="login-brand">🏬</div><h1 class="login-title">Y-TRADE &amp; SERVICES SARL</h1><p class="login-sub">Connectez-vous pour accéder à l’application.</p><span class="login-lbl">Adresse e-mail</span><input id="fbEmail" type="email" placeholder="Adresse e-mail" autocomplete="username"><span class="login-lbl">Mot de passe</span><input id="fbPassword" type="password" placeholder="Mot de passe" autocomplete="current-password"><button data-yfb-login="1" class="login-btn">🔓 Se connecter</button><button data-yfb-guest="1" class="ghost login-guest">👁️ Accès visiteur (lecture seule)</button><p class="login-foot">L’accès est sécurisé par Firebase Authentication. Les droits sont chargés depuis votre profil Firestore.</p></div></div>`}
-function loadingPanel(){return`<div class="login-wrap"><div class="login-card"><div class="login-brand">🏬</div><h1 class="login-title">Y-TRADE &amp; SERVICES SARL</h1><p class="login-sub">🔥 Connexion sécurisée en cours...</p></div></div>`}
-function can(v){if(v==='aide')return true;if(guest)return new Set(['dash','pnl','dir','aide']).has(v);if(!fbProfile)return false;if(fbProfile.role==='Administrateur')return true;if((fbProfile.mask||[]).includes('cost')&&new Set(['pnl','rent','scenario','dir']).has(v))return false;if((fbProfile.mask||[]).includes('sal')&&new Set(['staff','tre','pnl','rent','dir']).has(v))return false;if((fbProfile.deny||[]).includes(v))return false;if((fbProfile.extra||[]).includes(v))return true;return(ACCESS[fbProfile.role]||new Set()).has(v)}
-function canEnter(v){if(guest)return false;if(!fbProfile||fbProfile.role==='Administrateur')return true;if(fbProfile.ro)return false;return!(fbProfile.noEntry||[]).includes(v)}
-function applyMask(){if(guest||!fbProfile||fbProfile.role==='Administrateur')return;const mk=new Set(fbProfile.mask||[]),cols=hs=>document.querySelectorAll('#main table').forEach(t=>{const ix=[];[...t.querySelectorAll('th')].forEach((h,i)=>hs.includes(h.textContent.trim())&&ix.push(i));t.querySelectorAll('tbody tr').forEach(tr=>ix.forEach(i=>{const td=tr.children[i];if(td)td.innerHTML='<span class="mute">•••</span>'}))}),tiles=ls=>document.querySelectorAll('#main .k').forEach(k=>{const sp=k.querySelector('span');if(sp&&ls.includes(sp.textContent.trim())){const b=k.querySelector('b');if(b)b.textContent='•••';const i=k.querySelector('i');if(i)i.remove()}});if(mk.has('cost')){cols(['Prix d’achat','Marge','Valeur','Valeur de l’écart','Coût']);tiles(['Marge brute','Taux de marge','Valeur du stock','Seuil de rentabilité'])}if(mk.has('sal')){cols(['Salaire','Masse salariale','Trésorerie']);tiles(['Trésorerie','Masse salariale mensuelle'])}}
-function applyRO(){if(!guest&&(!fbProfile||!fbProfile.ro)&&canEnter(ui.v))return;document.querySelectorAll('#main form[data-f],#main [data-x],#main [data-mx],#main [data-sd],#main [data-del],#main [data-ed],#main [data-sp],#main [data-spall],#main [data-scd],#main [data-pogsave],#main [data-ivsave]').forEach(x=>x.remove());document.querySelectorAll('#main [data-act="pay"]').forEach(b=>(b.closest('span')||b).remove());document.querySelectorAll('#main input[data-pog],#main input[data-ivc]').forEach(x=>x.disabled=true);if(!$('#main .y-ro-note'))$('#main').insertAdjacentHTML('afterbegin','<div class="box y-ro-note" style="margin-bottom:12px;border-left:5px solid var(--mute)"><p class="mute" style="margin:0">👁️ Accès en lecture seule : aucune saisie possible.</p></div>')}
-function ensureHeader(){let rb=$('#rb'),sp=$('header span');if(!rb&&sp){sp.insertAdjacentHTML('afterbegin','<span id="rb" class="mute" style="font-size:12px"></span>');rb=$('#rb')}document.querySelectorAll('[data-bk],[data-shareapp],header button').forEach(b=>{const t=(b.textContent||'').toLowerCase();if(b.matches('[data-bk],[data-shareapp]')||t.includes('whatsapp')||t.includes('e-mail'))b.remove()});const old=$('#bkf');if(old)old.remove();const oldOut=$('#lgout');if(oldOut)oldOut.remove();if(rb&&!$('#ySaveHtml'))rb.insertAdjacentHTML('afterend','<button class="ghost" id="ySaveHtml" data-yhtml="save">🌐 Sauvegarde HTML</button><button class="ghost" id="yLoadHtml" data-yhtml="load">♻️ Restaurer HTML</button><button class="ghost" id="yShare" data-yshare="app">📤 Envoyer vers</button><button class="ghost" id="yLogout" data-yfb-logout="1">🚪 Déconnexion</button><input id="yHtmlFile" type="file" accept=".html,.htm,text/html" hidden>')}
-function cleanShare(){document.querySelectorAll('[data-shareapp],[data-d4="wa"],[data-d4="mail"]').forEach(x=>x.remove());document.querySelectorAll('button').forEach(b=>{const t=(b.textContent||'').toLowerCase();if(t.includes('whatsapp')||t.includes('e-mail'))b.remove()});document.querySelectorAll('#main .box h2').forEach(h=>{if((h.textContent||'').toLowerCase().includes('onedrive')){const b=h.closest('.box');if(b)b.remove()}})}
-const oldBak=htmlBackup;
-htmlBackup=function(){const c=JSON.parse(JSON.stringify(S));c.impLock=true;let th=null;try{th=JSON.parse(localStorage.getItem('comptoir_th'))}catch(e){}const js=JSON.stringify({v:2,savedAt:new Date().toISOString(),data:c,theme:th}).replace(/</g,'\\u003c'),O='<scr'+'ipt',C='</scr'+'ipt>';const sc=[...document.querySelectorAll('body>script')].filter(x=>x.id!='y-trade-backup'&&(x.src||!x.type||/javascript|module/i.test(x.type))).map(x=>x.src?O+' src="'+x.getAttribute('src')+'"'+(x.type?' type="'+x.type+'"':'')+'>'+C:(x.type?O+' type="'+x.type+'">'+x.textContent+C:O+'>'+x.textContent+C));return'<!DOCTYPE html>\n<html lang="'+SRC0.lang+'">\n<head>\n'+SRC0.head+'\n</head>\n<body>\n'+SRC0.body+'\n'+O+' type="application/json" id="y-trade-backup">'+js+C+'\n'+sc.join('\n')+'\n</body>\n</html>'}
-function dlhtml(n,t){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([t],{type:'text/html;charset=utf-8'}));a.download=n;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1500)}
-async function share(title,text,blob,name){try{if(navigator.share){if(blob&&navigator.canShare){const f=new File([blob],name,{type:blob.type||'text/html'});if(navigator.canShare({files:[f]})){await navigator.share({title,text,files:[f]});return true}}await navigator.share({title,text});return true}}catch(e){if(e&&e.name==='AbortError')return true}if(blob)dlhtml(name,blob);return false}
-async function syncNow(force=false){const f=FB();if(!f||!fbUser||!fbProfile||fbProfile.role!=='Administrateur')return false;try{const ref=f.doc(f.db,...CLOUD_DOC),snap=await f.getDoc(ref),remote=snap.exists()?snap.data():null,m=meta(),base=+m.updatedAtMs||0,rt=remoteMs(remote);if(!force&&dirty()&&base&&rt&&rt>base){conflict=true;try{localStorage.setItem('yt_conflict_backup_html',htmlBackup())}catch(e){}toast('⚠️ Conflit cloud détecté : sauvegarde locale créée.');return false}const data=JSON.parse(JSON.stringify(S)),size=new Blob([JSON.stringify(data)]).size;if(size>900000)throw Error('Données trop volumineuses pour Firestore.');const now=Date.now(),ver=(+m.version||0)+1;await f.setDoc(ref,{data,updatedAt:f.serverTimestamp(),updatedAtMs:now,updatedBy:fbUser.uid,updatedByEmail:fbUser.email||'',version:ver});setMeta({updatedAtMs:now,version:ver,user:fbUser.uid});clearDirty();conflict=false;return true}catch(e){console.error(e);toast('❌ Synchronisation impossible — '+ferr(e));return false}}
-function scheduleAutoSync(){clearTimeout(syncTimer);clearTimeout(maxTimer);if(!bootDone||cloudLoading||guest||!fbUser||!fbProfile||fbProfile.role!=='Administrateur')return;if(!firstDirtyAt)firstDirtyAt=Date.now();syncTimer=setTimeout(()=>{firstDirtyAt=0;syncNow()},SYNC_DELAY);maxTimer=setTimeout(()=>{firstDirtyAt=0;syncNow()},Math.max(0,SYNC_MAX-(Date.now()-firstDirtyAt)))}
-async function loadCloud(auto){const f=FB();if(!f||!fbUser||!fbProfile){if(!auto)toast('⚠️ Connexion Firebase requise.');return false}try{const s=await f.getDoc(f.doc(f.db,...CLOUD_DOC));if(!s.exists()){if(!auto)toast('⚠️ Aucune sauvegarde cloud trouvée.');return false}try{localStorage.setItem(LOCAL_BACKUP_KEY,JSON.stringify(S))}catch(e){}cloudLoading=true;norm((s.data()||{}).data);localSave();cloudLoading=false;const c=s.data()||{},ms=remoteMs(c)||Date.now();setMeta({updatedAtMs:ms,version:+c.version||1,user:c.updatedBy||''});clearDirty();conflict=false;render();toast(auto?'☁️ Données cloud restaurées automatiquement':'☁️ Données chargées depuis Firestore');return true}catch(e){cloudLoading=false;console.error(e);toast('❌ Chargement cloud impossible — '+ferr(e));return false}}
-async function bootstrap(){if(bootRunning||!fbUser||!fbProfile||guest)return;bootRunning=true;try{const f=FB(),s=await f.getDoc(f.doc(f.db,...CLOUD_DOC));if(!s.exists()){bootDone=true;render();return}const c=s.data()||{},rt=remoteMs(c),m=meta(),lt=+m.updatedAtMs||0,ld=dirty();if(!lt){try{localStorage.setItem(LOCAL_BACKUP_KEY,JSON.stringify(S))}catch(e){}cloudLoading=true;norm(c.data);localSave();cloudLoading=false;setMeta({updatedAtMs:rt||Date.now(),version:+c.version||1,user:c.updatedBy||''});clearDirty();toast('☁️ Données cloud restaurées automatiquement')}else if(ld&&rt>lt){conflict=true;try{localStorage.setItem('yt_conflict_backup_html',htmlBackup())}catch(e){}toast('⚠️ Conflit détecté : vos modifications locales sont conservées.')}else if(!ld&&rt>lt){cloudLoading=true;norm(c.data);localSave();cloudLoading=false;setMeta({updatedAtMs:rt,version:+c.version||1,user:c.updatedBy||''});clearDirty();toast('☁️ Nouvelles données restaurées automatiquement')}bootDone=true;render()}catch(e){bootDone=true;render();toast('⚠️ Cloud indisponible — les données locales restent disponibles.')}finally{bootRunning=false}}
-function messagesView(){const send=!guest&&fbUser&&fbProfile&&!fbProfile.ro;const list=messages.slice().sort((a,b)=>(a.createdAtMs||0)-(b.createdAtMs||0));return`<div class="box"><h2>💬 Messagerie</h2><p class="mute">Canal général interne — messages en temps réel entre les appareils connectés.</p><div id="yMessages" style="display:grid;gap:8px;max-height:52vh;overflow:auto;padding:4px 2px">${list.length?list.map(m=>`<div style="border:1px solid var(--line);border-radius:10px;padding:9px 11px"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><b>${esc(m.senderName||m.senderEmail||'Utilisateur')}</b><span class="mute" style="font-size:12px">${esc(m.timeLabel||'')}</span></div><div style="margin-top:5px;white-space:pre-wrap;overflow-wrap:anywhere">${esc(m.text||'')}</div></div>`).join(''):'<p class="mute">Aucun message.</p>'}</div>${send?'<div class="box" style="margin-top:12px;background:var(--bg)"><h3 style="margin-top:0">✍️ Nouveau message</h3><textarea id="yMsgInput" maxlength="2000" placeholder="Écrivez votre message ici…" style="min-height:120px"></textarea><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:6px"><span class="mute" id="yMsgCount">0 / 2000</span><button data-ym-send="1">📨 Envoyer</button></div></div>':'<p class="mute" style="margin-top:12px">Lecture seule : l’envoi est désactivé.</p>'}</div>`}
-V.messages=messagesView;NAV.push(['💬 Communication',[['messages','💬 Messagerie']]]);TT.messages='💬 Messagerie';
-function startMessages(){if(msgUnsub)msgUnsub();const f=FB();if(!f||!fbUser)return;try{const q=f.query(f.collection(f.db,...MSG_PATH),f.orderBy('createdAtMs','desc'),f.limit(100));msgUnsub=f.onSnapshot(q,s=>{messages=s.docs.map(d=>({id:d.id,...d.data(),timeLabel:d.data().createdAtMs?new Date(d.data().createdAtMs).toLocaleString('fr-FR'):''}));if(ui.v==='messages'){render();const box=$('#yMessages');if(box)box.scrollTop=box.scrollHeight}},e=>toast('⚠️ Messagerie indisponible — '+ferr(e)))}catch(e){console.error(e)}}
-async function sendMessage(){const i=$('#yMsgInput'),t=i?i.value.trim():'';if(!t)return toast('Écrivez un message.');if(t.length>2000)return toast('Message trop long.');const f=FB();if(!f||!fbUser||!fbProfile)return toast('⚠️ Connexion Firebase requise.');try{await f.addDoc(f.collection(f.db,...MSG_PATH),{roomId:'general',text:t,senderUid:fbUser.uid,senderName:fbProfile.name||fbUser.email||'Utilisateur',senderEmail:fbUser.email||'',createdAt:f.serverTimestamp(),createdAtMs:Date.now()});i.value='';const c=$('#yMsgCount');if(c)c.textContent='0 / 2000';toast('📨 Message envoyé')}catch(e){toast('❌ Envoi impossible — '+ferr(e))}}
-function accFirebase(){if(guest||!fbProfile)return'';const a=fbProfile,map={};NAV.forEach(g=>g[1].forEach(i=>map[i[0]]=i[1]));const mods=a.role==='Administrateur'?Object.values(map):[...new Set([...(ACCESS[a.role]||[]),...(a.extra||[])])].map(k=>map[k]||k);return`<div class="box"><h2>👤 Compte &amp; accès</h2><p class="mute">Votre compte est géré par Firebase Authentication et votre profil Firestore.</p><div class="kg">${K('Utilisateur',esc(a.name||''))}${K('E-mail',esc(a.email||''))}${K('Rôle',(ROLE_IC[a.role]||'👤')+' '+esc(a.role||''))}${K('Statut',a.actif===false?'⛔ Désactivé':'✅ Actif')}</div><h3>🔐 Modules accessibles</h3><div style="display:flex;gap:6px;flex-wrap:wrap">${mods.map(x=>`<span class="mute" style="border:1px solid var(--line);border-radius:999px;padding:4px 8px">${esc(x)}</span>`).join('')}</div></div>`}
-V.acc=accFirebase;
-document.addEventListener('click',async e=>{const b=e.target.closest('[data-yfb-login],[data-yfb-logout],[data-yfb-guest]');if(!b)return;const f=FB();if(!f)return toast('⚠️ Firebase indisponible.');if(b.dataset.yfbGuest){guest=true;fbReady=true;bootDone=true;ui.v='dash';render();return}if(b.dataset.yfbLogout){try{await f.signOut(f.auth)}catch(x){toast('❌ Déconnexion impossible.')}return}const em=($('#fbEmail')||{}).value?.trim()||'',pw=($('#fbPassword')||{}).value||'';if(!em)return toast('Entrez votre adresse e-mail.');if(!pw)return toast('Entrez votre mot de passe.');b.disabled=true;b.textContent='⏳ Connexion...';try{await f.signInWithEmailAndPassword(f.auth,em,pw)}catch(x){b.disabled=false;b.textContent='🔓 Se connecter';toast(x.code==='auth/invalid-credential'?'E-mail ou mot de passe incorrect.':'❌ '+(x.message||'Connexion impossible.'))}});
-document.addEventListener('click',async e=>{const b=e.target.closest('[data-yhtml],[data-yshare],[data-ym-send]');if(!b)return;if(b.dataset.ymSend)return sendMessage();if(b.dataset.yhtml==='save'){dlhtml('Y-TRADE-'+today+'-'+hm(new Date())+'.html',htmlBackup());toast('🌐 Sauvegarde HTML complète générée');return}if(b.dataset.yhtml==='load'){return $('#yHtmlFile')?.click()}if(b.dataset.yshare){const txt=ui.v==='rap'?window.__ytradeReportText||'Rapport Y-TRADE': 'Sauvegarde HTML complète de Y-TRADE & SERVICES SARL';const bl=new Blob([ui.v==='dir'&&typeof buildDirReportHTML==='function'?buildDirReportHTML():htmlBackup()],{type:'text/html'});await share('Y-TRADE & SERVICES SARL',txt,bl,'Y-TRADE-'+(ui.v==='dir'?'rapport-':'')+today+'.html')}});
-document.addEventListener('input',e=>{if(e.target.id==='yMsgInput'){const c=$('#yMsgCount');if(c)c.textContent=e.target.value.length+' / 2000'}});document.addEventListener('keydown',e=>{if(e.target?.id==='yMsgInput'&&e.ctrlKey&&e.key==='Enter'){e.preventDefault();sendMessage()}});
-document.addEventListener('change',e=>{if(e.target.id!=='yHtmlFile')return;const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=new DOMParser().parseFromString(String(r.result),'text/html'),n=d.querySelector('#y-trade-backup');if(!n)throw Error();const p=JSON.parse(n.textContent||'');if(!p.data||!Array.isArray(p.data.products)||!Array.isArray(p.data.sales))throw Error();try{localStorage.setItem(LOCAL_BACKUP_KEY,JSON.stringify(S))}catch(e){}norm(p.data);save();render();toast('✅ Sauvegarde HTML restaurée')}catch(x){toast('❌ Fichier HTML de sauvegarde invalide.')}e.target.value='';};r.readAsText(f)});
-const baseRender=render;render=function(){ensureHeader();if(!fbReady){$('#main').innerHTML=loadingPanel();$('#nav').style.opacity='.35';$('#nav').style.pointerEvents='none';return}if(!fbUser&&!guest){$('#main').innerHTML=loginPanel();$('#nav').style.opacity='.35';$('#nav').style.pointerEvents='none';$('#ttl').textContent='';$('#per').style.display='none';$('#rb').textContent='☁️ Firebase';$('#yLogout').style.display='none';return}const oldAccounts=S.accounts;S.accounts=[];try{baseRender()}finally{S.accounts=oldAccounts}document.querySelectorAll('#nav a').forEach(a=>{if(!can(a.dataset.v))a.remove()});document.querySelectorAll('#nav h3').forEach(h=>{if(!h.nextElementSibling||h.nextElementSibling.tagName!=='A')h.remove()});if(!can(ui.v)){ui.v=guest?'dash':DEFV[fbProfile?.role]||'dash';const oa=S.accounts;S.accounts=[];try{baseRender()}finally{S.accounts=oa}}$('#nav').style.opacity='';$('#nav').style.pointerEvents='';$('#rb').textContent=guest?'👁️ Visiteur · Lecture seule':'👤 '+(fbProfile?.name||fbUser?.email||'Utilisateur')+' · '+(fbProfile?.role||'');$('#yLogout').style.display=guest?'none':'';cleanShare();applyMask();applyRO();if(conflict&&!$('#yConflictNote'))$('#main').insertAdjacentHTML('afterbegin','<div id="yConflictNote" class="box" style="margin-bottom:12px;border-left:5px solid var(--neg)"><b>⚠️ Conflit de synchronisation</b><p class="mute">Une version cloud plus récente existe. Vos données locales sont conservées.</p></div>')};
-async function init(){const f=FB();if(!f){fbReady=true;render();return}f.onAuthStateChanged(f.auth,async u=>{fbUser=u||null;fbProfile=null;guest=false;fbReady=false;bootDone=false;if(!u){fbReady=true;render();return}try{const s=await f.getDoc(f.doc(f.db,'users',u.uid));if(!s.exists())throw Error('Aucun profil Firestore associé à ce compte.');const d=s.data()||{};if(d.actif===false){await f.signOut(f.auth);throw Error('Ce compte est désactivé.')}fbProfile={uid:u.uid,id:u.uid,email:u.email||'',name:d.nom||d.name||u.email||'Utilisateur',role:d.role||'Ventes',actif:d.actif!==false,extra:Array.isArray(d.extra)?d.extra:[],deny:Array.isArray(d.deny)?d.deny:[],ro:!!d.ro,noEntry:Array.isArray(d.noEntry)?d.noEntry:[],mask:Array.isArray(d.mask)?d.mask:[]};fbReady=true;ui.v=DEFV[fbProfile.role]||'dash';render();await bootstrap();startMessages()}catch(e){fbUser=null;fbProfile=null;fbReady=true;render();toast('⚠️ '+(e.message||'Connexion impossible.'))}})}
-if(FB())init();else window.addEventListener('ytrade-firebase-ready',init,{once:true});
-window.yTradeSync=()=>syncNow(true);window.yTradeLoad=()=>loadCloud(false);
+const FB=()=>window.yTradeFirebase||null;
+const CLOUD=['companies','y-trade','state','main'];
+const MSG=['companies','y-trade','messages'];
+const SYNC_DELAY=8000, SYNC_MAX=10000, RETRY=2000;
+const META='yt_cloud_meta_v3', DIRTY='yt_cloud_dirty_v3', LOCAL_BEFORE='yt_local_before_cloud_v3';
+let fbReady=false,fbUser=null,fbProfile=null,guest=false,bootDone=false,booting=false,loading=false;
+let syncTimer=0,maxTimer=0,retryTimer=0,dirtyAt=0,msgUnsub=null,messages=[],conflict=false;
+
+function fErr(e){const c=e&&e.code||'';if(c.includes('permission-denied'))return'Accès Firestore refusé par les règles de sécurité.';if(c.includes('unauthenticated'))return'Session Firebase expirée.';if(c.includes('unavailable')||c.includes('failed-precondition'))return'Firestore temporairement indisponible.';if(c.includes('network'))return'Connexion Internet indisponible.';return e&&e.message?e.message:'Erreur Firebase inconnue.'}
+function getMeta(){try{return JSON.parse(localStorage.getItem(META)||'{}')||{}}catch(e){return{}}}
+function setMeta(v){try{localStorage.setItem(META,JSON.stringify(v))}catch(e){}}
+function dirty(){try{return localStorage.getItem(DIRTY)==='1'}catch(e){return false}}
+function setDirty(v){try{v?localStorage.setItem(DIRTY,'1'):localStorage.removeItem(DIRTY)}catch(e){}}
+function cloudMs(d){try{if(d&&d.updatedAtMs)return +d.updatedAtMs||0;if(d&&d.updatedAt&&typeof d.updatedAt.toMillis==='function')return d.updatedAt.toMillis()}catch(e){}return 0}
+function normalize(incoming){
+ if(!incoming||!Array.isArray(incoming.products)||!Array.isArray(incoming.sales)||!Array.isArray(incoming.purchases))throw new Error('Les données cloud sont invalides.');
+ const old=S;
+ const base=fresh();
+ const copy=JSON.parse(JSON.stringify(incoming));
+ S=Object.assign(base,copy);
+ ['products','clients','suppliers','sales','purchases','expenses','mv'].forEach(k=>{if(!Array.isArray(S[k]))S[k]=[]});
+ if(!Number.isFinite(+S.n)){
+  const ids=[...S.products,...S.clients,...S.suppliers,...S.sales,...S.purchases,...S.expenses,...(S.staff||[])].map(x=>+x.id||0);
+  S.n=Math.max(1,...ids)+1;
+ }
+ return old;
+}
+
+// Sauvegarde locale conservée et branchée sur l'auto-sync.
+const originalSave=save;
+save=function(){
+ originalSave();
+ if(loading||guest||!bootDone||!fbUser||!fbProfile||fbProfile.role!=='Administrateur')return;
+ setDirty(true);scheduleSync();
+};
+
+async function syncNow(reason='auto',force=false){
+ const f=FB();
+ if(!f||!f.db||!fbUser||!fbProfile||fbProfile.actif===false||fbProfile.role!=='Administrateur')return false;
+ clearTimeout(retryTimer);
+ try{
+  const ref=f.doc(f.db,...CLOUD);
+  const snap=await f.getDoc(ref),remote=snap.exists()?snap.data():null,m=getMeta(),rm=cloudMs(remote),lm=+m.updatedAtMs||0;
+  if(!force&&dirty()&&lm&&rm&&rm>lm){
+   conflict=true;
+   try{localStorage.setItem('yt_conflict_backup_html',htmlBackup())}catch(e){}
+   toast('⚠️ Conflit cloud détecté : vos données locales sont conservées.');
+   return false;
+  }
+  const data=JSON.parse(JSON.stringify(S)),json=JSON.stringify(data),size=new Blob([json]).size;
+  if(size>900000)throw new Error('Données trop volumineuses pour la première version cloud.');
+  const now=Date.now(),version=(+m.version||0)+1;
+  await f.setDoc(ref,{data,updatedAt:f.serverTimestamp(),updatedAtMs:now,updatedBy:fbUser.uid,updatedByEmail:fbUser.email||'',version});
+  setMeta({updatedAtMs:now,version,user:fbUser.uid});setDirty(false);conflict=false;
+  if(reason!=='silent')toast('☁️ Données synchronisées automatiquement');
+  return true;
+ }catch(e){
+  console.error('Y-TRADE auto-sync',e);
+  if(reason==='auto'){clearTimeout(retryTimer);retryTimer=setTimeout(()=>syncNow('retry'),RETRY)}
+  return false;
+ }
+}
+function scheduleSync(){
+ clearTimeout(syncTimer);clearTimeout(maxTimer);
+ if(!bootDone||loading||guest||!fbUser||!fbProfile||fbProfile.role!=='Administrateur')return;
+ if(!dirtyAt)dirtyAt=Date.now();
+ syncTimer=setTimeout(()=>{syncNow('auto');dirtyAt=0},SYNC_DELAY);
+ const remain=Math.max(0,SYNC_MAX-(Date.now()-dirtyAt));
+ maxTimer=setTimeout(()=>{syncNow('auto');dirtyAt=0},remain);
+}
+
+async function autoLoad(){
+ if(booting||!fbUser||!fbProfile||guest)return;
+ booting=true;
+ try{
+  const f=FB();if(!f||!f.db)return;
+  const snap=await f.getDoc(f.doc(f.db,...CLOUD));
+  if(!snap.exists()){bootDone=true;render();return}
+  const cloud=snap.data()||{},incoming=cloud.data,rm=cloudMs(cloud),m=getMeta(),lm=+m.updatedAtMs||0;
+  if(!incoming){bootDone=true;render();return}
+  if(!lm){
+   try{localStorage.setItem(LOCAL_BEFORE,JSON.stringify(S))}catch(e){}
+   loading=true;normalize(incoming);originalSave();loading=false;
+   setMeta({updatedAtMs:rm||Date.now(),version:+cloud.version||1,user:cloud.updatedBy||''});setDirty(false);conflict=false;
+   toast('☁️ Données cloud restaurées automatiquement');
+  }else if(dirty()&&rm>lm){
+   conflict=true;try{localStorage.setItem('yt_conflict_backup_html',htmlBackup())}catch(e){}
+   toast('⚠️ Conflit détecté : modifications locales conservées.');
+  }else if(!dirty()&&rm>lm){
+   try{localStorage.setItem(LOCAL_BEFORE,JSON.stringify(S))}catch(e){}
+   loading=true;normalize(incoming);originalSave();loading=false;
+   setMeta({updatedAtMs:rm,version:+cloud.version||1,user:cloud.updatedBy||''});setDirty(false);conflict=false;
+   toast('☁️ Nouvelles données restaurées automatiquement');
+  }
+  bootDone=true;render();
+ }catch(e){
+  bootDone=true;render();console.warn('Auto-load Firestore:',fErr(e));
+ }finally{booting=false}
+}
+
+// ---------- Messagerie ----------
+NAV.push(['💬 Communication',[['messages','💬 Messagerie']]]);
+TT.messages='💬 Messagerie';
+const roleIcon={Administrateur:'🔐',Ventes:'🛒',Achats:'📦','Comptabilité':'🧮'};
+const ACCESS={
+ Administrateur:null,
+ Ventes:new Set(['dash','sales','clients','products','stock','rec','rap','docs','inv','objp','messages','aide']),
+ Achats:new Set(['dash','purchases','suppliers','products','stock','det','rap','docs','inv','messages','aide']),
+ 'Comptabilité':new Set(['dash','expenses','staff','tre','rec','det','pnl','rent','rap','dir','docs','budget','scenario','objp','messages','aide'])
+};
+function canModule(v){if(guest)return new Set(['dash','pnl','dir','aide']).has(v);if(!fbProfile)return false;if(fbProfile.role==='Administrateur')return true;const base=ACCESS[fbProfile.role]||new Set();if((fbProfile.deny||[]).includes(v))return false;if((fbProfile.extra||[]).includes(v))return true;return base.has(v)}
+function msgView(){
+ const canSend=!!fbUser&&!!fbProfile&&fbProfile.actif!==false&&!fbProfile.ro&&!guest;
+ const rows=messages.slice().sort((a,b)=>(a.createdAtMs||0)-(b.createdAtMs||0));
+ return '<div class="box" style="margin-bottom:12px"><h2>💬 Messagerie interne</h2><p class="mute">Canal général — les messages sont synchronisés en temps réel entre les appareils connectés.</p>'+
+ '<div id="yMessages" style="display:grid;gap:8px;max-height:48vh;overflow:auto;padding:4px 2px">'+
+ (rows.length?rows.map(m=>'<div style="border:1px solid var(--line);border-radius:10px;padding:10px 12px"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><b>'+esc(m.senderName||m.senderEmail||'Utilisateur')+'</b><span class="mute" style="font-size:12px">'+esc(m.timeLabel||'')+'</span></div><div style="margin-top:5px;white-space:pre-wrap;overflow-wrap:anywhere">'+esc(m.text||'')+'</div></div>').join(''):'<p class="mute">Aucun message pour le moment.</p>')+
+ '</div>'+ (canSend?'<div class="box" style="margin-top:12px;background:var(--bg)"><h3 style="margin-top:0">✍️ Nouveau message</h3><textarea id="yMsgInput" maxlength="2000" placeholder="Écrivez votre message ici…" style="min-height:140px;font:15px/1.5 inherit"></textarea><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:7px"><span class="mute" id="yMsgCount">0 / 2000</span><button data-ym-send="1">📨 Envoyer</button></div></div>':'<p class="mute" style="margin-top:12px">Lecture seule : l’envoi des messages est désactivé.</p>')+'</div>';
+}
+V.messages=msgView;
+async function startMessages(){
+ if(msgUnsub){msgUnsub();msgUnsub=null}
+ const f=FB();if(!f||!f.db||!fbUser||!fbProfile||fbProfile.actif===false)return;
+ try{
+  const q=f.query(f.collection(f.db,...MSG),f.orderBy('createdAtMs','asc'),f.limit(100));
+  msgUnsub=f.onSnapshot(q,snap=>{
+   messages=snap.docs.map(d=>{const x=d.data()||{};let tm=x.timeLabel||'';if(!tm&&x.createdAtMs)try{tm=new Date(x.createdAtMs).toLocaleString('fr-FR')}catch(e){}return{id:d.id,...x,timeLabel:tm}});
+   if(ui.v==='messages'){render();const box=$('#yMessages');if(box)box.scrollTop=box.scrollHeight}
+  },err=>console.error('Messagerie',err));
+ }catch(e){console.error('Messagerie init',e)}
+}
+async function sendMessage(){
+ const i=$('#yMsgInput'),textMsg=i?i.value.trim():'';if(!textMsg)return toast('Écrivez un message.');
+ const f=FB();if(!f||!f.db||!fbUser||!fbProfile)return toast('⚠️ Connexion Firebase requise.');
+ try{await f.addDoc(f.collection(f.db,...MSG),{roomId:'general',text:textMsg,senderUid:fbUser.uid,senderName:fbProfile.nom||fbProfile.name||fbUser.email||'Utilisateur',senderEmail:fbUser.email||'',createdAt:f.serverTimestamp(),createdAtMs:Date.now(),timeLabel:new Date().toLocaleString('fr-FR')});if(i)i.value='';const c=$('#yMsgCount');if(c)c.textContent='0 / 2000';toast('📨 Message envoyé')}catch(e){toast('❌ Envoi impossible — '+fErr(e))}
+}
+
+document.addEventListener('input',e=>{if(e.target.id==='yMsgInput'){const c=$('#yMsgCount');if(c)c.textContent=e.target.value.length+' / 2000'}});
+document.addEventListener('keydown',e=>{if(e.target&&e.target.id==='yMsgInput'&&e.ctrlKey&&e.key==='Enter'){e.preventDefault();sendMessage()}});
+document.addEventListener('click',e=>{const b=e.target.closest('[data-ym-send]');if(b){e.preventDefault();sendMessage()}});
+
+// ---------- Sauvegarde HTML + Envoyer vers ----------
+function downloadHtml(name,text){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'text/html;charset=utf-8'}));a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),2000)}
+const htmlBase=htmlBackup;
+htmlBackup=function(){
+ const c=JSON.parse(JSON.stringify(S));c.impLock=true;
+ let th=null;try{th=JSON.parse(localStorage.getItem('comptoir_th'))}catch(e){}
+ const payload=JSON.stringify({v:3,savedAt:new Date().toISOString(),data:c,theme:th}).replace(/</g,'\\u003c');
+ const O='<scr'+'ipt',C='</scr'+'ipt>';
+ const scripts=[...document.querySelectorAll('body>script')].filter(x=>x.id!=='y-trade-backup');
+ const bodyScripts=scripts.map(x=>x.src?O+' src="'+x.getAttribute('src')+'"'+(x.type?' type="'+x.type+'"':'')+'>'+C:(x.type?O+' type="'+x.type+'">'+x.textContent+C:O+'>'+x.textContent+C)).join('\n');
+ return '<!DOCTYPE html><html lang="'+(document.documentElement.lang||'fr')+'"><head>'+(document.head.innerHTML)+'</head><body>'+SRC0.body+O+' type="application/json" id="y-trade-backup">'+payload+C+bodyScripts+'</body></html>';
+};
+function shareCurrent(){
+ let title='Y-TRADE & SERVICES SARL',textShare='Sauvegarde HTML complète de Y-TRADE & SERVICES SARL.',blob=new Blob([htmlBackup()],{type:'text/html'}),fn='Y-TRADE-'+today+'-'+hm(new Date())+'.html';
+ if(['rap','dir'].includes(ui.v)&&window.__c&&window.__c.rt){textShare=window.__c.rt;fn='rapport-direction-'+today+'.html'}
+ if(navigator.share){try{const file=new File([blob],fn,{type:'text/html'});if(navigator.canShare&&navigator.canShare({files:[file]})){navigator.share({title,text:textShare,files:[file]}).catch(()=>{});return}navigator.share({title,text:textShare}).catch(()=>{});return}catch(e){}}
+ downloadHtml(fn,blob instanceof Blob?blob:htmlBackup());toast('📤 Fichier prêt à être partagé depuis vos téléchargements');
+}
+// Retire uniquement les boutons de partage séparés WhatsApp/e-mail et OneDrive ; les autres fonctions restent.
+function cleanLegacyShare(){
+ document.querySelectorAll('[data-shareapp],[data-d4="wa"],[data-d4="mail"]').forEach(b=>b.remove());
+ document.querySelectorAll('button').forEach(b=>{const t=(b.textContent||'').toLowerCase();if(t.includes('whatsapp')||t.includes('e-mail')||t.includes('onedrive'))b.remove()});
+ if(!$('#yShare')&&$('header'))$('header').querySelector('span')?.insertAdjacentHTML('beforeend','<button class="ghost" id="yShare" data-yshare="1" title="Envoyer vers WhatsApp, e-mail, partage natif…">📤 Envoyer vers</button>');
+}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-yshare]');if(!b)return;e.preventDefault();shareCurrent()});
+
+// Ajout de sauvegarde/restauration HTML dans le module Données en conservant tout le contenu existant.
+const oldBak=V.bak;
+V.bak=function(){
+ const top='<div class="box" style="margin-bottom:12px"><h2>🌐 Sauvegarde HTML complète</h2><p class="mute">Un seul fichier HTML contenant l’application et les données. Cette sauvegarde est indépendante de la synchronisation automatique et constitue votre secours hors ligne.</p><div class="tools"><button data-yhtml="save">🌐 Télécharger la sauvegarde HTML</button><input id="yHtmlFile" type="file" accept=".html,.htm,text/html" hidden></div></div>';
+ return top+oldBak();
+};
+document.addEventListener('click',e=>{const b=e.target.closest('[data-yhtml]');if(!b)return;e.preventDefault();if(b.dataset.yhtml==='save'){if(guest)return toast('🔒 Sauvegarde réservée à un compte connecté.');downloadHtml('Y-TRADE-'+today+'-'+hm(new Date())+'.html',htmlBackup());toast('🌐 Sauvegarde HTML complète générée')}else{$('#yHtmlFile')?.click()}});
+document.addEventListener('change',e=>{if(e.target.id!=='yHtmlFile')return;const file=e.target.files&&e.target.files[0];if(!file)return;const rd=new FileReader();rd.onload=()=>{try{const d=new DOMParser().parseFromString(String(rd.result),'text/html'),n=d.querySelector('#y-trade-backup');if(!n)throw 0;const p=JSON.parse(n.textContent||'');if(!p.data||!Array.isArray(p.data.products)||!Array.isArray(p.data.sales))throw 0;try{localStorage.setItem(LOCAL_BEFORE,JSON.stringify(S))}catch(x){}loading=true;normalize(p.data);originalSave();loading=false;setDirty(false);render();toast('✅ Sauvegarde HTML restaurée')}catch(err){toast('❌ Fichier HTML invalide ou incomplet.')}e.target.value=''};rd.readAsText(file)});
+
+// ---------- Auth Firebase ----------
+function loginPanel(){return'<div class="login-wrap"><div class="login-card"><div class="login-brand">🏬</div><h1 class="login-title">Y-TRADE &amp; SERVICES SARL</h1><p class="login-sub">Connexion sécurisée</p><span class="login-lbl">Adresse e-mail</span><input id="fbEmail" type="email" placeholder="Adresse e-mail" autocomplete="username"><span class="login-lbl">Mot de passe</span><input id="fbPassword" type="password" placeholder="Mot de passe" autocomplete="current-password"><button data-fb-login="1" class="login-btn">🔓 Se connecter</button><button data-fb-guest="1" class="ghost login-guest">👁️ Accès visiteur (lecture seule)</button><p class="login-foot">Connexion sécurisée par Firebase Authentication.</p></div></div>'}
+function loadingPanel(){return'<div class="login-wrap"><div class="login-card"><div class="login-brand">🏬</div><h1 class="login-title">Y-TRADE &amp; SERVICES SARL</h1><p class="login-sub">Connexion sécurisée en cours…</p></div></div>'}
+function profilePanel(){if(guest||!fbProfile)return'';return '<div class="box" style="margin-bottom:12px"><h2>👤 Compte connecté</h2><div class="kg">'+K('Utilisateur',esc(fbProfile.nom||fbProfile.name||fbUser?.email||''))+K('Rôle',(roleIcon[fbProfile.role]||'👤')+' '+esc(fbProfile.role||''))+K('Statut',fbProfile.actif===false?'⛔ Désactivé':'✅ Actif')+'</div></div>'}
+function addHeaderControls(){
+ cleanLegacyShare();
+ const h=$('header');if(!h)return;
+ let span=h.querySelector(':scope > span');if(!span){span=document.createElement('span');span.style='display:flex;gap:6px;flex-wrap:wrap;align-items:center';h.appendChild(span)}
+ if(!span.querySelector('#yLogout')){const b=document.createElement('button');b.className='ghost';b.id='yLogout';b.dataset.fbLogout='1';b.textContent='🚪 Déconnexion';span.appendChild(b)}
+ const lo=$('#yLogout');if(lo)lo.style.display=guest?'none':'';
+}
+const baseRender=render;
+render=function(){
+ if(!fbReady){$('#nav').style.opacity='.35';$('#nav').style.pointerEvents='none';$('#ttl').textContent='';$('#per').style.display='none';$('#main').innerHTML=loadingPanel();return}
+ if(!fbUser&&!guest){$('#nav').style.opacity='.35';$('#nav').style.pointerEvents='none';$('#main').innerHTML=loginPanel();$('#ttl').textContent='';$('#per').style.display='none';return}
+ // Le système de connexion local du fichier d'origine est conservé dans le code, mais Firebase Authentication devient l'entrée principale.
+ const oldAccounts=S.accounts;S.accounts=[];
+ try{baseRender()}finally{S.accounts=oldAccounts}
+ // Rendre visibles les modules du fichier maître. Les permissions Firebase s'appliquent seulement ensuite.
+ document.querySelectorAll('#nav a').forEach(a=>{
+   const v=a.dataset.v;
+   if(!canModule(v))a.remove();
+ });
+ if(!canModule(ui.v)){ui.v=guest?'dash':((({Administrateur:'dash',Ventes:'sales',Achats:'purchases','Comptabilité':'tre'})[fbProfile?.role])||'dash');}
+ // Refaire un rendu si le module courant a été corrigé par les permissions.
+ if(!document.querySelector('#nav a.on') || !document.querySelector('#nav a.on[data-v="'+ui.v+'"]')){
+   const oldAccounts2=S.accounts;S.accounts=[];try{baseRender()}finally{S.accounts=oldAccounts2}
+   document.querySelectorAll('#nav a').forEach(a=>{if(!canModule(a.dataset.v))a.remove()});
+   document.querySelectorAll('#nav h3').forEach(h=>{if(!h.nextElementSibling||h.nextElementSibling.tagName!=='A')h.remove()});
+ }
+ document.querySelectorAll('#nav h3').forEach(h=>{if(!h.nextElementSibling||h.nextElementSibling.tagName!=='A')h.remove()});
+ $('#nav').style.opacity='';$('#nav').style.pointerEvents='';
+ addHeaderControls();
+ const rb=$('#rb');if(rb)rb.textContent=guest?'👁️ Visiteur · Lecture seule':'👤 '+(fbProfile?.nom||fbProfile?.name||fbUser?.email||'Utilisateur')+' · '+(fbProfile?.role||'');
+ if(conflict&&!$('#yConflict'))$('#main').insertAdjacentHTML('afterbegin','<div id="yConflict" class="box" style="margin-bottom:12px;border-left:5px solid var(--neg)"><b>⚠️ Conflit de synchronisation</b><p class="mute" style="margin:5px 0 0">Une version cloud plus récente a été détectée. Vos données locales restent conservées.</p></div>');
+ if(guest){document.querySelectorAll('#main form[data-f]').forEach(f=>f.remove());document.querySelectorAll('#main button[data-act],#main button[data-yhtml],#main [data-ivsave],#main button[data-snr],#main button[data-scd]').forEach(b=>b.remove())}
+ cleanLegacyShare();
+};
+
+// Auth actions
+document.addEventListener('click',async e=>{const b=e.target.closest('[data-fb-login],[data-fb-logout],[data-fb-guest]');if(!b)return;const f=FB();if(!f)return toast('⚠️ Firebase indisponible.');
+ if(b.dataset.fbGuest){guest=true;fbUser=null;fbProfile=null;fbReady=true;bootDone=true;ui.v='dash';render();return}
+ if(b.dataset.fbLogout){try{if(msgUnsub){msgUnsub();msgUnsub=null}await f.signOut(f.auth)}catch(err){toast('❌ Déconnexion impossible.')}return}
+ const email=($('#fbEmail')||{}).value?.trim()||'',pass=($('#fbPassword')||{}).value||'';if(!email)return toast('Entrez votre e-mail.');if(!pass)return toast('Entrez votre mot de passe.');b.disabled=true;b.textContent='⏳ Connexion…';
+ try{await f.signInWithEmailAndPassword(f.auth,email,pass)}catch(err){b.disabled=false;b.textContent='🔓 Se connecter';const c=err&&err.code||'';toast(c==='auth/invalid-credential'?'E-mail ou mot de passe incorrect.':c==='auth/too-many-requests'?'Trop de tentatives.':'❌ '+fErr(err))}
+});
+
+async function initAuth(){const f=FB();if(!f||!f.auth){fbReady=true;render();return}f.onAuthStateChanged(f.auth,async user=>{
+ fbUser=user||null;fbProfile=null;guest=false;bootDone=false;fbReady=true;
+ if(!user){render();return}
+ try{
+  const snap=await f.getDoc(f.doc(f.db,'users',user.uid));if(!snap.exists())throw new Error('Aucun profil Firestore associé à ce compte.');
+  const d=snap.data()||{};if(d.actif===false){await f.signOut(f.auth);throw new Error('Compte désactivé.');}
+  fbProfile={uid:user.uid,email:user.email||'',nom:d.nom||d.name||user.email||'Utilisateur',role:d.role||'Ventes',actif:d.actif!==false,ro:!!d.ro,extra:Array.isArray(d.extra)?d.extra:[],deny:Array.isArray(d.deny)?d.deny:[]};
+  ui.v=({Administrateur:'dash',Ventes:'sales',Achats:'purchases','Comptabilité':'tre'})[fbProfile.role]||'dash';
+  await autoLoad();render();await startMessages();
+ }catch(err){fbUser=null;fbProfile=null;render();toast('⚠️ '+(err&&err.message?err.message:'Connexion impossible.'))}
+ });}
+
+if(FB())initAuth();else window.addEventListener('ytrade-firebase-ready',initAuth,{once:true});
+
+// Expose des fonctions pour diagnostic/test.
+window.yTradeV2={syncNow,autoLoad,startMessages,sendMessage,htmlBackup};
 })();
 </script>
-
 </body>
 </html>
