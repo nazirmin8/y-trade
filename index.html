@@ -898,7 +898,7 @@ function initFirebaseAuth(){
       return;
     }
 
-    f.onAuthStateChanged(async user=>{
+    f.onAuthStateChanged(f.auth, async user=>{
 
       fbReady=false;
 
