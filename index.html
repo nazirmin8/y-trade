@@ -81,6 +81,23 @@ button{transition:transform .1s}button:active{transform:scale(.96)}td.nx button{
 .login-btn{width:100%;padding:10px 14px;font-size:15px}
 .login-guest{width:100%;margin-top:8px}
 .login-foot{margin-top:16px;font-size:12px;color:var(--mute)}
+
+.msg-shell{display:grid;gap:12px}
+.msg-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.msg-room{font-size:13px;color:var(--mute)}
+.msg-list{display:grid;gap:8px;max-height:58vh;overflow:auto;padding-right:3px}
+.msg-empty{text-align:center;padding:24px 12px;color:var(--mute)}
+.msg-item{display:flex}
+.msg-item.me{justify-content:flex-end}
+.msg-bubble{max-width:min(78%,680px);padding:9px 11px;border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.msg-item.me .msg-bubble{border-color:color-mix(in srgb,var(--acc) 38%,var(--line));background:color-mix(in srgb,var(--acc) 8%,var(--panel))}
+.msg-meta{display:flex;gap:7px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--mute);margin-bottom:3px}
+.msg-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.msg-compose{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}
+.msg-compose textarea{min-height:74px;max-height:180px;resize:vertical;margin:0}
+.msg-status{font-size:12px;color:var(--mute)}
+.msg-badge{display:inline-flex;min-width:18px;height:18px;padding:0 5px;align-items:center;justify-content:center;border-radius:999px;background:var(--neg);color:#fff;font-size:10px;font-weight:700;margin-left:5px}
+@media (max-width:760px){.msg-bubble{max-width:88%}.msg-compose{grid-template-columns:1fr}.msg-compose button{width:100%}}
 </style>
 </head>
 <body>
@@ -90,6 +107,53 @@ button{transition:transform .1s}button:active{transform:scale(.96)}td.nx button{
 </div>
 <div id="toast" role="status"></div>
 <script type="application/json" id="y-trade-backup">{"v":1,"savedAt":"2026-09-26T21:26:58.995Z","data":{"n":1,"products":[],"clients":[],"suppliers":[],"sales":[],"purchases":[],"expenses":[],"mv":[],"impLock":true,"staff":[],"numv":2,"entryLock":false,"mailBk":"","snaps":[],"accounts":[],"modPins":{}},"theme":{"c":2,"d":"light"}}</script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+import {
+  getAuth,
+  signInWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged
+} from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  serverTimestamp,
+  collection,
+  addDoc,
+  query,
+  orderBy,
+  limit,
+  onSnapshot
+} from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAAlunHBOssaZemHJ0LzyFqqWFjUpqf-Jk",
+  authDomain: "y-trade.firebaseapp.com",
+  projectId: "y-trade",
+  storageBucket: "y-trade.firebasestorage.app",
+  messagingSenderId: "594448522138",
+  appId: "1:594448522138:web:cd3985bf190b778a193823"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+window.yTradeFirebase = {
+  app, auth, db,
+  signInWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+  doc, getDoc, setDoc, serverTimestamp,
+  collection, addDoc, query, orderBy, limit, onSnapshot
+};
+
+console.log("🔥 Firebase Y-TRADE connecté");
+window.dispatchEvent(new Event("ytrade-firebase-ready"));
+</script>
 <script>
 // ---- squelette d'origine (pour la sauvegarde HTML complète)
 const SRC0=(()=>{const h=[...document.head.children].filter(n=>/^(TITLE|LINK|STYLE)$/.test(n.tagName)||(n.tagName=='META'&&!n.httpEquiv)).map(n=>n.outerHTML).join('\n');return{lang:document.documentElement.lang||'fr',head:h,body:['.app','#toast'].map(q=>document.querySelector(q).outerHTML).join('\n')}})();
@@ -101,7 +165,62 @@ const daysAgo=n=>addDays(today,-n),by=(a,i)=>a.find(x=>x.id==i)||{};
 const MODES=['Espèces','Banque','Mobile Money'],CH=['Loyer','Salaires','Transport','Électricité et eau','Communication','Autres'];
 let S,ui={v:'dash',p:'month',mode:'simple',arm:''};
 function fresh(){return{n:1,products:[],clients:[],suppliers:[],sales:[],purchases:[],expenses:[],mv:[]}}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+let autoSyncTimer=null,autoSyncMaxTimer=null,autoSyncPending=false,autoSyncRunning=false;
+let startupCloudCheckDone=false;
+let autoLoadDone=false;
+const AUTO_SYNC_DELAY=8000;
+const AUTO_SYNC_MAX=10000;
+function scheduleAutoSync(){
+  autoSyncPending=true;
+  clearTimeout(autoSyncTimer);
+  autoSyncTimer=setTimeout(()=>{autoSyncTimer=null;runAutoSync()},AUTO_SYNC_DELAY);
+  if(!autoSyncMaxTimer){
+    autoSyncMaxTimer=setTimeout(()=>{
+      autoSyncMaxTimer=null;
+      clearTimeout(autoSyncTimer);
+      autoSyncTimer=null;
+      runAutoSync();
+    },AUTO_SYNC_MAX);
+  }
+}
+async function runAutoSync(){
+  if(autoSyncRunning||!autoSyncPending)return;
+  if(!startupCloudCheckDone){
+    clearTimeout(autoSyncTimer);
+    autoSyncTimer=setTimeout(()=>runAutoSync(),500);
+    return;
+  }
+  if(!window.yTradeAuth?.authenticated||window.yTradeAuth?.role!=='Administrateur'||typeof window.yTradeSync!=='function'){
+    autoSyncPending=false;
+    clearTimeout(autoSyncTimer);
+    clearTimeout(autoSyncMaxTimer);
+    autoSyncTimer=autoSyncMaxTimer=null;
+    return;
+  }
+  autoSyncPending=false;
+  clearTimeout(autoSyncTimer);clearTimeout(autoSyncMaxTimer);
+  autoSyncTimer=autoSyncMaxTimer=null;
+  autoSyncRunning=true;
+  try{
+    const ok=await window.yTradeSync({silent:true,auto:true});
+    if(!ok){
+      autoSyncPending=true;
+      autoSyncTimer=setTimeout(()=>runAutoSync(),2000);
+    }
+  }catch(err){
+    console.error('Auto-synchronisation:',err);
+    autoSyncPending=true;
+    autoSyncTimer=setTimeout(()=>runAutoSync(),2000);
+  }finally{autoSyncRunning=false}
+}
+function save(){
+  try{
+    localStorage.setItem(KEY,JSON.stringify(S));
+    localStorage.setItem('comptoir_local_change_at',String(Date.now()));
+    scheduleAutoSync();
+  }catch(e){console.warn('Sauvegarde locale impossible:',e)}
+}
+
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(toast.h);toast.h=setTimeout(()=>t.classList.remove('on'),2400)}
 const id=()=>S.n++;
 const stock=p=>(p.open||0)+S.purchases.filter(x=>x.productId==p.id).reduce((t,x)=>t+x.qty,0)-S.sales.filter(x=>x.productId==p.id).reduce((t,x)=>t+x.qty,0);
@@ -241,7 +360,7 @@ L.push('📝 RAPPORT Y-TRADE & SERVICES SARL — '+(ui.p=='all'?'toute la pério
 if(pv&&pv.ca)L.push(a.ca>=pv.ca?'📈 Les ventes progressent de '+pcn(a.ca,pv.ca).slice(1)+' par rapport à la période précédente.':'📉 Les ventes reculent de '+pcn(a.ca,pv.ca).slice(1)+' : relancez les clients réguliers.');
 L.push(a.res>=0?'✅ La période est bénéficiaire.':'❌ La période est déficitaire.');if(a.chg>a.mg)L.push('🔥 Les charges dépassent la marge brute : surveillez les dépenses.');if(low.length)L.push('🚨 Commandez '+low.map(p=>p.name).join(', ')+' avant la rupture.');if(od.length)L.push('📞 Relancez les clients en retard : '+fmt(rs(od))+' à encaisser.');if(!low.length&&!od.length&&a.res>=0)L.push('🎉 Rien de critique à signaler.');
 ui.rt=L.join('\n');return L.map(l=>l?'<p>'+esc(l)+'</p>':'<br>').join('')}
-V.rap=()=>{const h=rap();return `<div class="tools"><button data-r="cp">📋 Copier (WhatsApp)</button><button class="ghost" data-r="dl">⬇️ .txt</button><button class="ghost" data-r="html">🌐 HTML</button><button class="ghost" data-r="pdf">📄 PDF</button></div><div class="box rep">${h}</div>`};
+V.rap=()=>{const h=rap();return `<div class="tools"><button data-r="send">📤 Envoyer vers</button><button class="ghost" data-r="dl">⬇️ .txt</button><button class="ghost" data-r="html">🌐 HTML</button><button class="ghost" data-r="pdf">📄 PDF</button></div><div class="box rep">${h}</div>`};
 const KM={'Chiffre d’affaires':['💰','sales'],'Achats':['📦','purchases'],'Marge brute':['📊','pnl'],'Taux de marge':['🎯','pnl'],'Charges':['💸','expenses'],'Créances clients':['🧾','rec'],'Dettes fournisseurs':['🏭','det'],'Trésorerie':['🏦','tre'],'Valeur du stock':['🗃️','stock'],'Total des créances':['💰'],'Total des dettes':['🧾'],'Échues (plus de 30 jours)':['⏰'],'Espèces':['💵'],'Banque':['🏛️'],'Mobile Money':['📱'],'Total':['🧮']},HM={'6 derniers mois':'📈','Top 3 produits par quantité':'🏆','Top 3 produits par valeur':'💎','Meilleurs clients':'⭐','Alertes':'🔔'},TV=['sales','purchases','expenses','products','stock','clients','suppliers','rec','det','tre'];
 const nv=t=>{const s=t.replace(/[\s\u202f\u00a0]/g,'');return/^[+−-]?\d+([.,]\d+)?(%|[A-Za-zÀ-ÿ]+)?$/.test(s)?parseFloat(s.replace('−','-').replace(',','.')):NaN};
 function fl(){const q=(ui.q||'').toLowerCase();document.querySelectorAll('#main .sc tbody tr').forEach(r=>{if(r.cells.length<2)return;let ok=!q||r.textContent.toLowerCase().includes(q);if(ok&&ui.st){const u=nv(r.cells[7].textContent)>0;ok=ui.st=='u'?u:!u}r.style.display=ok?'':'none'})}
@@ -266,7 +385,7 @@ if(b.matches('th.so')){const i=b.cellIndex,d=b.dataset.d=b.dataset.d=='1'?-1:1,t
 if(b.id=='thm'){const dk=matchMedia('(prefers-color-scheme: dark)').matches,cur=tk.d||(dk?'dark':'light');tk.d=cur=='dark'?'light':'dark';svT();return aT()}
 if(b.dataset.c!=null){tk.c=+b.dataset.c;svT();aT();return toast('🎨 Couleur appliquée')}
 if(b.dataset.x){const k=b.dataset.x,i=+b.dataset.i,key=k+i;if(ui.arm!=key){ui.arm=key;b.textContent='Confirmer ?';b.classList.add('neg');return toast('Cliquez encore pour supprimer')}ui.arm='';const m=del(k,i);if(m)toast(m);else{save();toast('🗑️ Supprimé')}return render()}
-if(b.dataset.r=='cp')return cpy(ui.rt,'📋 Rapport copié');if(b.dataset.r=='dl')return dlf('rapport-y-trade-'+today+'.txt',ui.rt,'text/plain');
+if(b.dataset.r=='send'){const blob=new Blob(['<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Rapport Y-TRADE</title></head><body><h1>📝 Rapport Y-TRADE &amp; SERVICES SARL</h1>'+ui.rt.split('\n').map(l=>l?'<p>'+esc(l)+'</p>':'<br>').join('')+'</body></html>'],{type:'text/html'});return shareTextOrFile('rapport-y-trade-'+today+'.html',blob,ui.rt).then(ok=>{if(!ok){dlf('rapport-y-trade-'+today+'.html',blob,'text/html');toast('📤 Rapport HTML téléchargé : le partage de l’appareil n’est pas disponible.')}})}if(b.dataset.r=='dl')return dlf('rapport-y-trade-'+today+'.txt',ui.rt,'text/plain');
 if(b.dataset.r=='html'){const esc2=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));return dlf('rapport-y-trade-'+today+'.html','<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Rapport Y-TRADE</title><style>body{font:15px/1.6 system-ui,sans-serif;background:#EEF1F0;color:#16211F;padding:24px;max-width:720px;margin:auto}h1{color:#0B6E63}p{margin:5px 0}</style></head><body><h1>📝 Rapport Y-TRADE &amp; SERVICES SARL</h1>'+ui.rt.split('\n').map(l=>l?'<p>'+esc2(l)+'</p>':'<br>').join('')+'</body></html>','text/html')}
 if(b.dataset.r=='pdf'){if(!window.jspdf)return toast('Module PDF indisponible.');const{jsPDF}=window.jspdf,doc=new jsPDF({unit:'pt'}),W=doc.internal.pageSize.getWidth(),Hh=doc.internal.pageSize.getHeight();let y=48;doc.setFontSize(15);doc.setTextColor(11,110,99);doc.text('Rapport Y-TRADE & SERVICES SARL',40,y);y+=22;doc.setFontSize(10);doc.setTextColor(0,0,0);ui.rt.split('\n').forEach(l=>{if(!l){y+=8;return}const ls=doc.splitTextToSize(l,W-80);ls.forEach(x=>{if(y>Hh-40){doc.addPage();y=48}doc.text(x,40,y);y+=14})});return download('rapport-y-trade-'+today+'.pdf',doc.output('blob'),'application/pdf')}
 if(b.dataset.csv){const t=$('#main .sc table'),ix=[...t.tHead.rows[0].cells].map((h,i)=>i).filter(i=>{const x=t.tHead.rows[0].cells[i].textContent;return x!=''&&x!='Règlement'}),rows=[...t.tBodies[0].rows].filter(r=>r.cells.length>1&&r.style.display!='none').map(r=>ix.map(i=>r.cells[i].textContent.trim()));return dlf('y-trade-'+ui.v+'-'+today+'.csv',csv(ix.map(i=>t.tHead.rows[0].cells[i].textContent.replace(/ [▲▼]$/,'')),rows),'text/csv')}
@@ -317,7 +436,7 @@ if(topCl&&a.ca&&sum(topCl[1],'total')/a.ca>.4)L.push('Le client « '+esc(topCl[0
 const tres=sum(S.mv,'amt');if(tres<a.chg)L.push('La trésorerie disponible ('+fmt(tres)+') est inférieure aux charges d’exploitation de la période ('+fmt(a.chg)+') — surveiller le niveau de liquidités.');
 if(!L.length)L.push('Aucune alerte particulière : les indicateurs de la période sont globalement sains.');
 return '<ul>'+L.map(x=>'<li style="display:list-item">'+x+'</li>').join('')+'</ul>'})())}
-V.dir=()=>`<div class="tools"><button data-d2="html">⬇️ Télécharger (HTML imprimable → PDF)</button><button class="ghost" data-d2="cp">📋 Copier la synthèse</button><button class="ghost" data-d4="wa">📤 Partager WhatsApp</button><button class="ghost" data-d4="mail">📤 Partager e-mail</button></div><div class="box">${dir()}</div>`;
+V.dir=()=>`<div class="tools"><button data-d2="html">⬇️ Télécharger (HTML imprimable → PDF)</button><button class="ghost" data-d2="cp">📋 Copier la synthèse</button><button class="ghost" data-d4="send">📤 Envoyer vers</button></div><div class="box">${dir()}</div>`;
 const CSS=':root{--acc:#0B6E63;--mute:#5B6A67;--line:#D5DCDA;--panel:#fff;--pos:#0B7A4B;--neg:#B3261E;--c1:#0B6E63;--c2:#C77D0A;--c3:#5A6ACF}body{font:14px/1.5 system-ui,sans-serif;max-width:900px;margin:24px auto;padding:0 16px;color:#16211F}h1{color:#0B6E63;margin:0}h2{font-size:16px;border-bottom:2px solid #0B6E63;padding-bottom:3px}table{border-collapse:collapse;width:100%}th,td{padding:5px 8px;text-align:left;border-bottom:1px solid #ccc}th{color:#5B6A67;font-weight:500}.r{text-align:right}.pos{color:#0B7A4B}.neg{color:#B3261E}.g2{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-bottom:12px}.box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;min-width:0}svg text{fill:var(--mute);font-size:11px}.b1{fill:var(--c1)}.b2{fill:var(--c2)}.b3{fill:var(--c3)}.lg{display:flex;gap:14px;font-size:13px;color:var(--mute);margin-top:4px;flex-wrap:wrap}.lg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px}@media print{h2{break-after:avoid}tr{break-inside:avoid}.box{break-inside:avoid}}';
 function buildDirReportHTML(){const nw=new Date().toLocaleDateString('fr-FR'),r=rng(ui.p,0);return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Rapport de direction</title><style>${CSS}</style></head><body><h1>🏛️ Rapport de direction</h1><p>Y-TRADE &amp; SERVICES SARL · ${ui.p=='all'?'Toute la période':'Du '+r[0]+' au '+r[1]} · Édité le ${nw}</p>${dir()}</body></html>`}
 window.__buildDirReportHTML=buildDirReportHTML;
@@ -403,8 +522,23 @@ const T=s=>String(s).replace(/[\u202f\u00a0]/g,' '),pad=n=>String(n).padStart(3,
 document.head.insertAdjacentHTML('beforeend','<style>.al{display:flex;gap:10px;align-items:center;padding:9px 12px;border-radius:8px;margin-bottom:6px;font-weight:600;color:var(--c);background:color-mix(in srgb,var(--c) 12%,transparent)}@media print{aside,.tools,header button,#toast{display:none!important}.app{display:block}}</style>');
 let db=null,U=null,me=null,role=null,roles={},profs={},pt=null,ready=false;
 const RM={Ventes:'dash sales clients products stock rec rap docs',Achats:'dash purchases suppliers products stock det rap docs','Comptabilité':'dash expenses staff tre rec det pnl rent rap dir docs'};
-const team=()=>db&&U&&role,adm=()=>!team()||role=='Administrateur';
-const can=v=>adm()||(RM[role]||'').split(' ').includes(v);
+const team=()=>window.yTradeAuth?.authenticated===true||(db&&U&&role);
+const adm=()=>{
+  if(window.yTradeAuth?.authenticated===true)return window.yTradeAuth.role==='Administrateur';
+  return !team()||role==='Administrateur';
+};
+const can=v=>{
+  if(window.yTradeAuth?.authenticated===true){
+    const a=window.yTradeAuth;
+    if(a.role==='Administrateur')return true;
+    if((a.maskDeny||[]).includes(v))return false;
+    const bs=new Set((RM[a.role]||'').split(' ').filter(Boolean));
+    (a.extra||[]).forEach(x=>bs.add(x));
+    (a.deny||[]).forEach(x=>bs.delete(x));
+    return bs.has(v);
+  }
+  return adm()||(RM[role]||'').split(' ').includes(v);
+};
 // ---- navigation
 const G=n=>NAV.find(g=>g[0].includes(n));
 G('Opérations')[1].push(['docs','🧾 Factures & BL']);G('Tiers')[1].push(['staff','👔 Personnel']);G('Pilotage')[1].push(['acc','🔐 Accès & rôles']);
@@ -505,18 +639,37 @@ s=P.addSlide();ti(s,'Top clients & produits');s.addTable([['Client','Montant'],.
 s=P.addSlide();ti(s,'Personnel');s.addTable([['Nom','Poste','Salaire'],...S.staff.map(p=>[p.name,p.post||'',fmt(p.salary)])],{x:.4,y:.9,w:9,fontSize:11,border:bd});
 s=P.addSlide();ti(s,'Alertes & points d’attention');s.addText(al.map(x=>'• '+x).join('\n'),{x:.4,y:1,w:9,h:4,fontSize:13,lineSpacingMultiple:1.4});
 return download('rapport-direction-'+today+'.pptx',await P.write({outputType:'blob'}))}
-// ---- partage (WhatsApp / e-mail)
-function waLink(t){location.href='https://wa.me/?text='+encodeURIComponent(t)}
-function mailLink(subj,body){location.href='mailto:?subject='+encodeURIComponent(subj)+'&body='+encodeURIComponent(body)}
-async function shareBlob(filename,blob,text){try{if(navigator.share){const fl=new File([blob],filename,{type:blob.type});if(navigator.canShare&&navigator.canShare({files:[fl]})){await navigator.share({files:[fl],title:filename,text:text||''});return true}}}catch(e){if(e&&e.name=='AbortError')return true}return false}
-document.addEventListener('click',async e=>{const b=e.target.closest('[data-d4]');if(!b)return;try{C.rap();const ent='Y-TRADE & SERVICES SARL — Rapport de direction ('+(ui.p=='all'?'toute la période':rng(ui.p,0).join(' → '))+')\n\n',txt=ent+ui.rt;
-let blob=null;try{if(window.__buildDirReportHTML)blob=new Blob([window.__buildDirReportHTML()],{type:'text/html'})}catch(eb){}
-const fn='rapport-direction-y-trade-'+today+'.html';
-if(blob){const shared=await shareBlob(fn,blob,txt);if(shared)return}
-if(blob){download(fn,blob,'text/html')}
-if(!blob&&navigator.share){try{await navigator.share({title:'Rapport de direction - Y-TRADE & SERVICES SARL',text:txt});return}catch(e2){if(e2&&e2.name=='AbortError')return}}
-const note=blob?' Le fichier HTML imprimable (PDF) du rapport ("'+fn+'") vient d’être téléchargé sur cet appareil (dossier Téléchargements) — joignez-le manuellement.':'';
-if(b.dataset.d4=='wa')waLink(txt+note);else mailLink('Rapport de direction - Y-TRADE & SERVICES SARL',txt+(blob?'\n\nLe fichier HTML imprimable en PDF du rapport ("'+fn+'") vient d’être téléchargé sur cet appareil, dans le dossier Téléchargements.\nMerci de le joindre à cet e-mail avant de l’envoyer. Une fois ouvert dans un navigateur, vous pouvez aussi l’imprimer en PDF (Ctrl/Cmd+P → Enregistrer en PDF).':''))}catch(err){toast('Partage impossible : '+(err&&err.message||'erreur inconnue'))}});
+// ---- partage générique via le partage natif
+async function shareTextOrFile(filename,blob,text){
+  try{
+    if(navigator.share){
+      const opts={title:filename,text:text||''};
+      if(blob){
+        const file=new File([blob],filename,{type:blob.type});
+        if(!navigator.canShare||navigator.canShare({files:[file]}))opts.files=[file];
+      }
+      await navigator.share(opts);
+      return true;
+    }
+  }catch(e){if(e&&e.name==='AbortError')return true}
+  return false;
+}
+window.yTradeShare=shareTextOrFile;
+document.addEventListener('click',async e=>{
+  const b=e.target.closest('[data-d4="send"]');
+  if(!b)return;
+  try{
+    C.rap();
+    const txt='Y-TRADE & SERVICES SARL — Rapport de direction\n\n'+ui.rt;
+    let blob=null;
+    try{if(window.__buildDirReportHTML)blob=new Blob([window.__buildDirReportHTML()],{type:'text/html'})}catch(_){}
+    const fn='rapport-direction-y-trade-'+today+'.html';
+    if(await window.yTradeShare(fn,blob,txt))return;
+    if(blob)await dlf(fn,blob,'text/html');
+    toast('📤 Rapport HTML téléchargé : le partage natif n’est pas disponible.');
+  }catch(err){toast('Partage impossible : '+(err&&err.message||'erreur inconnue'))}
+});
+
 // ---- accès & rôles, synchronisation d'équipe
 async function ld(ids){if(!U)return;const m=ids.filter(i=>!(i in profs));if(!m.length)return;m.forEach(i=>profs[i]={name:''});try{Object.assign(profs,await U.profiles(m));render()}catch(e){}}
 V.acc=()=>{const ids=Object.keys(roles),O=['Administrateur','Ventes','Achats','Comptabilité','En attente'];ld(ids);return '<p class="mute">Chaque personne apparaît après sa première ouverture. La première devient Administrateur ; les suivantes restent « En attente » jusqu’à attribution d’un rôle.</p>'+(ids.length?tbl(['Personne','Rôle','Actions'],ids.map(i=>[esc((profs[i]&&profs[i].name)||'…')+(i==me?' (vous)':''),`<select data-ro="${esc(i)}">${O.map(o=>`<option${o==roles[i]?' selected':''}>${o}</option>`).join('')}</select>`,`<span style="display:flex;gap:6px"><button data-rs="${esc(i)}">Enregistrer</button>${i!=me?`<button class="ghost" data-rr="${esc(i)}">Retirer</button>`:''}</span>`])):'<p class="mute">Aucun accès enregistré.</p>')};
@@ -529,7 +682,7 @@ if(U&&me)db.doc('app/roles').onSnapshot(async s=>{roles=s.exists?s.data()||{}:{}
 // ---- rendu
 const EXV=['sales','purchases','expenses','products','stock','clients','suppliers','rec','det','tre','staff','docs','pnl','rent'],FX='<button class="ghost" data-fx="xlsx">📗 Excel</button><button class="ghost" data-fx="pdf">📄 PDF</button><button class="ghost" data-fx="docx">📝 Word</button><button class="ghost" data-fx="html">🌐 HTML</button>';
 function post3(){addEd();if(ui.ed&&EDV.includes(ui.v))$('#main').insertAdjacentHTML('afterbegin',panel());document.querySelectorAll('#nav a').forEach(a=>{const v=a.dataset.v;if(!can(v)||(v=='acc'&&!(team()&&role=='Administrateur')))a.remove()});document.querySelectorAll('#nav h3').forEach(h=>{if(!h.nextElementSibling||h.nextElementSibling.tagName!='A')h.remove()});
-if(!adm())document.querySelectorAll('[data-x],[data-mx],[data-sd],[data-del]').forEach(b=>b.remove());$('#rb').textContent=role?'🔐 '+role:'';
+if(!adm())document.querySelectorAll('[data-x],[data-mx],[data-sd],[data-del]').forEach(b=>b.remove());$('#rb').textContent=window.yTradeAuth?.authenticated?'👤 '+esc(window.yTradeAuth.name||window.yTradeAuth.email||'Utilisateur')+' · '+esc(window.yTradeAuth.role||''):role?'🔐 '+role:'';
 if(team()&&role=='En attente')$('#main').innerHTML='<div class="box" style="border-left:5px solid var(--c2)"><h2>⏳ Accès en attente de validation</h2><p>Votre compte est enregistré mais aucun rôle ne vous a encore été attribué. Contactez un administrateur.</p></div>';
 document.querySelectorAll(SEL).forEach(b=>{b.style.opacity=locked()?.45:''});const sc=$('#main .sc');if(sc&&EXV.includes(ui.v)&&!$('#main [data-fx]')){const c=$('#main [data-csv]');c?c.insertAdjacentHTML('afterend',FX):sc.insertAdjacentHTML('beforebegin','<div class="tools">'+FX+'</div>')}}
 const r2=render;render=function(){fix();if(ui.edv!==ui.v){ui.ed=null;ui.edv=ui.v}if(!can(ui.v))ui.v='dash';r2();post3()};
@@ -568,9 +721,7 @@ if(d.spall){const n=S.staff.filter(p=>paySal(p)).length;save();render();return t
 if(d.sd){if(ui.arm!='sd'+d.sd){ui.arm='sd'+d.sd;return render()}ui.arm='';S.staff=S.staff.filter(x=>x.id!=d.sd);save();render();return toast('🗑️ Supprimé')}
 if(d.rs&&db){const s=[...document.querySelectorAll('select[data-ro]')].find(x=>x.dataset.ro==d.rs);if(s){roles[d.rs]=s.value;try{await db.doc('app/roles').set(roles);toast('✅ Rôle enregistré')}catch(x){toast('Erreur d’enregistrement.')}}}
 if(d.rr&&db){if(ui.arm!='rr'+d.rr){ui.arm='rr'+d.rr;b.textContent='Confirmer ?';return}ui.arm='';delete roles[d.rr];try{await db.doc('app/roles').set(roles);toast('Accès retiré')}catch(x){toast('Erreur.')}}});
-$('#rb').insertAdjacentHTML('afterend','<button class="ghost" data-bk="save" title="Télécharger une sauvegarde complète (JSON)">💾 Sauvegarde</button><button class="ghost" data-bk="load" title="Restaurer depuis une sauvegarde JSON">♻️ Restaurer</button><input type="file" id="bkf" accept=".json" hidden>');
-document.addEventListener('click',e=>{const b=e.target.closest('[data-bk]');if(!b)return;if(b.dataset.bk=='save'){download('sauvegarde-y-trade-services-'+today+'.json',JSON.stringify(S,null,2),'application/json');toast('💾 Sauvegarde générée')}else if(adm())$('#bkf').click();else toast('Réservé à l’administrateur.')});
-$('#bkf').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;const fr=new FileReader();fr.onload=()=>{try{const o=JSON.parse(fr.result);if(!o.products||!o.sales||!o.purchases)throw 0;S=o;save();render();toast('✅ Sauvegarde restaurée (↩️ pour annuler)')}catch(x){toast('Fichier de sauvegarde invalide.')}e.target.value=''};fr.readAsText(f)});
+$('#rb').insertAdjacentHTML('afterend','<button class="ghost" data-bk="save" title="Télécharger une sauvegarde complète HTML">🌐 Sauvegarde HTML</button><button class="ghost" data-bk="load" title="Restaurer depuis une sauvegarde HTML">♻️ Restaurer HTML</button><button class="ghost" data-share-backup="1" title="Partager la sauvegarde HTML">📤 Envoyer vers</button><input type="file" id="bkf" accept=".html,text/html" hidden>');
 // ---- modification & suppression (tous les modules de saisie)
 const CL={s:'sales',p:'purchases',e:'expenses',pr:'products',c:'clients',f:'suppliers',st:'staff'},EDV=['sales','purchases','expenses','products','clients','suppliers','staff'];
 const remMv=(re,i)=>{S.mv=S.mv.filter(m=>{const g=re.exec(m.label);return!(g&&+g[1]==i)})};
@@ -603,7 +754,7 @@ const u={pr:S.sales.some(x=>x.productId==i)||S.purchases.some(x=>x.productId==i)
 if(u){render();return toast('Suppression impossible : utilisé par des opérations existantes.')}
 S[CL[k]]=S[CL[k]].filter(x=>x.id!=i);save();render();toast('🗑️ Supprimé')});
 // ---- verrou d'import
-const hs=s=>{let h=5381;for(const c of s)h=(h*33^c.charCodeAt(0))>>>0;return String(h)},locked=()=>S.impLock!==false,SEL='[data-imp],[data-xl="imp"],[data-act="restore"],[data-act="demo"],[data-act="clear"],[data-bk="load"],[data-snr]';let armed=false;
+const hs=s=>{let h=5381;for(const c of s)h=(h*33^c.charCodeAt(0))>>>0;return String(h)},locked=()=>S.impLock!==false,SEL='[data-imp],[data-xl="imp"],[data-act="restore"],[data-act="demo"],[data-act="clear"],[data-snr]';let armed=false;
 const s1=save;save=function(){if(armed){S.impLock=true;armed=false}s1()};
 const bk0=V.bak;V.bak=()=>(locked()?`<div class="box" style="margin-bottom:12px;border-left:5px solid var(--neg)"><h2>🔒 Import verrouillé</h2><p class="mute">Import CSV / Excel / JSON, restauration, données de démo et effacement sont bloqués. Le verrou se remet automatiquement après chaque import.</p><div class="tools">${S.impPin?'<input id="lkp" type="password" placeholder="Code de déverrouillage">':''}<button data-lk="open">🔓 Déverrouiller</button></div></div>`:`<div class="box" style="margin-bottom:12px;border-left:5px solid var(--c2)"><h2>🔓 Import déverrouillé</h2><p class="mute">Le verrou se remettra après la prochaine opération d’import.</p><div class="tools"><button data-lk="close">🔒 Verrouiller maintenant</button><input id="lkn" type="password" placeholder="Nouveau code (vide = aucun code)"><button class="ghost" data-lk="pin">Définir le code</button></div></div>`)+bk0();
 document.addEventListener('click',e=>{const b=e.target.closest(SEL);if(!b)return;if(locked()){e.stopImmediatePropagation();e.preventDefault();toast('🔒 Import verrouillé — déverrouillez-le dans Import / Export.')}else armed=true},true);
@@ -615,25 +766,60 @@ const c=JSON.parse(JSON.stringify(S));c.impLock=true;
 let th=null;try{th=JSON.parse(localStorage.getItem('comptoir_th'))}catch(e){}
 const js=JSON.stringify({v:1,savedAt:new Date().toISOString(),data:c,theme:th}).replace(/</g,'\\u003c');
 const O='<scr'+'ipt',C='</scr'+'ipt>';
-const sc=[...document.querySelectorAll('body>script')].filter(x=>x.id!='y-trade-backup'&&(x.src?/^https:\/\/(cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net)\//.test(x.src):!x.type||/javascript/i.test(x.type))).map(x=>x.src?O+' src="'+x.getAttribute('src')+'">'+C:O+'>'+x.textContent+C);
+const sc=[...document.querySelectorAll('body>script')].filter(x=>x.id!='y-trade-backup'&&(x.src?/^https:\/\/(cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net)\//.test(x.src):(!x.type||/javascript|module/i.test(x.type)))).map(x=>x.src?O+' src="'+x.getAttribute('src')+'">'+C:O+(x.type?' type="'+x.type+'"':'')+'>'+x.textContent+C);
 return '<!DOCTYPE html>\n<html lang="'+SRC0.lang+'">\n<head>\n'+SRC0.head+'\n</head>\n<body>\n'+SRC0.body+'\n'+O+' type="application/json" id="y-trade-backup">'+js+C+'\n'+sc.join('\n')+'\n</body>\n</html>'}
-$('#bkf').insertAdjacentHTML('afterend','<button class="ghost" data-bh="1" title="Télécharger l’application complète et toutes vos données dans un seul fichier HTML">🌐 HTML complet</button><button class="ghost" data-shareapp="wa" title="Partager l’application (WhatsApp)">📤 WhatsApp</button><button class="ghost" data-shareapp="mail" title="Partager l’application (e-mail)">📤 E-mail</button>');
-const bk2=V.bak;V.bak=()=>`<div class="box" style="margin-bottom:12px"><h2>🌐 Sauvegarde HTML complète</h2><p class="mute">Un seul fichier .html qui contient l’application <b>et toutes vos données</b> (ventes, achats, charges, stock, clients, fournisseurs, trésorerie, personnel…). Ouvrez-le dans n’importe quel navigateur pour tout retrouver. Conservez-le sur une clé USB, par e-mail ou dans un Drive.</p><div class="tools"><button data-bh="1">🌐 Télécharger la sauvegarde HTML</button></div></div><div class="box" style="margin-bottom:12px"><h2>☁️ Sauvegarde sur OneDrive (par e-mail)</h2><p class="mute">Cette application ne peut pas se connecter directement à Microsoft OneDrive. À la place : indiquez votre adresse e-mail Outlook/OneDrive ci-dessous, le fichier de sauvegarde sera téléchargé et un e-mail pré-rempli s’ouvrira vers cette adresse — joignez-y le fichier téléchargé, puis depuis Outlook.com vous pourrez l’enregistrer directement dans votre OneDrive (bouton « Enregistrer dans OneDrive » sur la pièce jointe).</p><div class="tools"><input id="mbk" type="email" placeholder="votre-adresse@outlook.com" value="${esc(S.mailBk)}"><button class="ghost" data-mbk="save">💾 Enregistrer l’adresse</button><button data-mbk="send">☁️ Envoyer vers OneDrive (e-mail)</button></div></div>`+bk2();
-document.addEventListener('click',e=>{const b=e.target.closest('[data-bh]');if(!b)return;if(!adm())return toast('Réservé à l’administrateur.');try{download('Y-TRADE-'+today+'-'+hm(new Date())+'.html',htmlBackup(),'text/html');toast('🌐 Sauvegarde HTML complète générée')}catch(x){toast('Sauvegarde impossible.')}});
-function mailLinkTo(to,subj,body){location.href='mailto:'+encodeURIComponent(to)+'?subject='+encodeURIComponent(subj)+'&body='+encodeURIComponent(body)}
-document.addEventListener('click',e=>{const b=e.target.closest('[data-mbk]');if(!b)return;const inp=$('#mbk'),v=inp?inp.value.trim():'';
-if(b.dataset.mbk=='save'){if(v&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v))return toast('Adresse e-mail invalide.');S.mailBk=v;save();return toast(v?'💾 Adresse enregistrée':'Adresse effacée')}
-if(b.dataset.mbk=='send'){const to=v||S.mailBk;if(!to)return toast('Saisissez votre adresse e-mail OneDrive/Outlook.');if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to))return toast('Adresse e-mail invalide.');if(v&&v!=S.mailBk){S.mailBk=v;save()}
-try{const blob=new Blob([htmlBackup()],{type:'text/html'});download('Y-TRADE-'+today+'-'+hm(new Date())+'.html',blob,'text/html')}catch(x){return toast('Sauvegarde impossible.')}
-mailLinkTo(to,'Sauvegarde Y-TRADE & SERVICES SARL — '+today,'Bonjour,\n\nLe fichier de sauvegarde complet (Y-TRADE-'+today+'.html) vient d’être téléchargé sur cet appareil.\nMerci de le joindre à cet e-mail avant de l’envoyer.\n\nUne fois reçu dans Outlook/OneDrive, ouvrez la pièce jointe et choisissez « Enregistrer dans OneDrive » pour le classer automatiquement dans votre OneDrive.');
-toast('📧 Fichier téléchargé — e-mail en préparation')}});
-document.addEventListener('click',async e=>{const b=e.target.closest('[data-shareapp]');if(!b)return;if(!adm())return toast('Réservé à l’administrateur.');
-let blob;try{blob=new Blob([htmlBackup()],{type:'text/html'})}catch(x){return toast('Sauvegarde impossible.')}
-const fn='Y-TRADE-'+today+'-'+hm(new Date())+'.html',msg='Sauvegarde de l’application Y-TRADE & SERVICES SARL du '+today+'.';
-const shared=await shareBlob(fn,blob,msg);if(shared)return;
-download(fn,blob,'text/html');
-if(b.dataset.shareapp=='wa')waLink(msg+' Le fichier vient d’être téléchargé — joignez-le manuellement dans WhatsApp.');
-else mailLink('Sauvegarde Y-TRADE & SERVICES SARL',msg+'\n\nLe fichier de sauvegarde vient d’être téléchargé sur votre appareil ; merci de le joindre à cet e-mail.')});
+const bk2=V.bak;
+V.bak=()=>`<div class="box" style="margin-bottom:12px"><h2>🌐 Sauvegarde HTML complète</h2><p class="mute">Un seul fichier <b>.html</b> contenant l’application et toutes vos données. Ouvrez-le dans un navigateur pour retrouver l’état sauvegardé.</p><div class="tools"><button data-bh="1">🌐 Télécharger la sauvegarde HTML</button><button class="ghost" data-share-backup="1">📤 Envoyer vers</button></div></div>`+bk2();
+
+document.addEventListener('click',async e=>{
+  const b=e.target.closest('[data-bh],[data-share-backup]');
+  if(!b)return;
+  if(!adm())return toast('Réservé à l’administrateur.');
+  let blob;
+  try{blob=new Blob([htmlBackup()],{type:'text/html'})}catch(x){return toast('Sauvegarde impossible.')}
+  const fn='Y-TRADE-'+today+'-'+hm(new Date())+'.html';
+  if(b.dataset.bh){
+    await download(fn,blob,'text/html;charset=utf-8');
+    return toast('🌐 Sauvegarde HTML complète générée');
+  }
+  if(await window.yTradeShare(fn,blob,'Sauvegarde de l’application Y-TRADE & SERVICES SARL du '+today+'.'))return;
+  await download(fn,blob,'text/html;charset=utf-8');
+  toast('📤 Sauvegarde HTML téléchargée.');
+});
+
+document.addEventListener('click',e=>{
+  const b=e.target.closest('[data-bk="load"]');
+  if(!b)return;
+  if(!adm())return toast('Réservé à l’administrateur.');
+  $('#bkf')?.click();
+});
+
+document.addEventListener('change',e=>{
+  if(e.target.id!=='bkf')return;
+  const f=e.target.files?.[0];
+  if(!f)return;
+  const fr=new FileReader();
+  fr.onload=()=>{
+    try{
+      const xd=new DOMParser().parseFromString(String(fr.result||''),'text/html');
+      const tag=xd.querySelector('#y-trade-backup');
+      if(!tag)throw new Error('Balise de sauvegarde absente.');
+      const o=JSON.parse(tag.textContent||'{}');
+      if(!o.data||!Array.isArray(o.data.products)||!Array.isArray(o.data.sales)||!Array.isArray(o.data.purchases))throw new Error('Sauvegarde HTML invalide.');
+      if(!confirm('Cette restauration va remplacer les données actuellement ouvertes. Continuer ?'))return;
+      S=JSON.parse(JSON.stringify(o.data));
+      if(o.theme){try{localStorage.setItem('comptoir_th',JSON.stringify(o.theme))}catch(_){}}
+      fix();
+      save();
+      render();
+      toast('✅ Sauvegarde HTML restaurée');
+    }catch(err){
+      console.error('Restauration HTML:',err);
+      toast('❌ Fichier HTML de sauvegarde invalide.');
+    }finally{e.target.value=''}
+  };
+  fr.readAsText(f);
+});
 
 document.addEventListener('click',e=>{const b=e.target.closest('[data-yb]');if(!b)return;if(b.dataset.yb=='skip')return $('#ybn').remove();if(!adm())return toast('Réservé à l’administrateur.');S=JSON.parse(JSON.stringify(EMB.data));fix();save();$('#ybn').remove();render();toast('✅ Sauvegarde du fichier restaurée')});
 // ---- lecture à voix haute de la page affichée (ou du texte sélectionné)
@@ -762,15 +948,15 @@ const D=(t,h,o)=>`<details class="box" style="margin-bottom:10px"${o?' open':''}
 V.aide=()=>`<p class="mute">Ce guide explique le fonctionnement de chaque module de <b>Y-TRADE &amp; SERVICES SARL</b>. Cliquez sur un titre pour déplier la section.</p>`
 +D('🧭 Prise en main','<p>Le menu à gauche donne accès à tous les modules, regroupés par thème (Pilotage, Opérations, Tiers, Stock, Finances, Données). Le titre de la page en haut indique où vous êtes.</p><ul><li><b>🔎 Recherche</b> : sur les listes (ventes, achats, clients…), un champ de recherche filtre les lignes du tableau en tapant un mot.</li><li><b>Filtre « Réglé / Non réglé »</b> : disponible sur certaines listes pour n’afficher que les factures payées ou impayées.</li><li><b>Période</b> : en haut des modules Ventes, Achats, Charges, Tableau de bord et Compte de résultat, un sélecteur permet de changer la période affichée (jour, semaine, mois, trimestre, année, ou dates personnalisées).</li><li><b>↩️ Annuler</b> (icône en haut) : annule la dernière opération effectuée (ajout, modification, suppression).</li><li><b>🌓</b> et les pastilles de couleur : changent le thème clair/sombre et la couleur d’accent de l’application.</li><li><b>🔊 Lire</b> : lit la page à voix haute (utile en déplacement ou pour les malvoyants).</li><li><b>🗑️ Supprimer</b> : un premier clic demande confirmation (« Confirmer ? »), il faut cliquer une seconde fois pour valider — évite les suppressions accidentelles.</li></ul>',1)
 +D('📊 Tableau de bord','<p>Vue d’ensemble de la période sélectionnée : chiffre d’affaires, achats, marge, charges, résultat, trésorerie, valeur du stock, créances et dettes. Un graphique montre l’évolution des 6 derniers mois. Cliquer sur un indicateur ouvre directement le module correspondant.</p>')
-+D('📑 Compte de résultat &amp; 📝 Rapport auto','<p><b>Compte de résultat</b> : détail du chiffre d’affaires, du coût des marchandises vendues, de la marge et des charges sur la période choisie.</p><p><b>Rapport auto</b> : synthèse textuelle prête à copier (pour WhatsApp) ou à télécharger en .txt — reprend les chiffres clés et quelques alertes (stock bas, retards de paiement…).</p>')
++D('📑 Compte de résultat &amp; 📝 Rapport auto','<p><b>Compte de résultat</b> : détail du chiffre d’affaires, du coût des marchandises vendues, de la marge et des charges sur la période choisie.</p><p><b>Rapport auto</b> : synthèse textuelle prête à copier ou à envoyer ou à télécharger en .txt — reprend les chiffres clés et quelques alertes (stock bas, retards de paiement…).</p>')
 +D('🛒 Ventes / 📦 Achats / 💸 Charges','<p>Formulaire en haut pour enregistrer une nouvelle opération (client/fournisseur, produit, quantité, prix, montant déjà payé, mode de paiement). Le tableau en dessous liste l’historique ; chaque ligne peut être modifiée (✏️) ou supprimée (🗑️, double clic pour confirmer). Le montant restant dû est calculé automatiquement à partir du montant payé.</p>')
 +D('🧾 Factures &amp; BL','<p>Retrouve toutes les factures et bons de livraison générés à partir des ventes/achats. Recherche et filtre « soldée / non soldée » disponibles.</p>')
 +D('👥 Clients / 🚚 Fournisseurs','<p>Carnet d’adresses : nom et téléphone. Ces fiches sont utilisées dans les formulaires de vente/achat et dans les rapports (top clients, dettes fournisseurs…).</p>')
 +D('👔 Personnel','<p>Liste des employés (poste, téléphone, date d’embauche, salaire mensuel). Le bouton « Payer » enregistre le versement d’un salaire en trésorerie ; « Payer les salaires du mois » règle tout le monde en une fois.</p>')
 +D('🏷️ Produits / 🗃️ Stock / 🧮 Inventaire','<p><b>Produits</b> : nom, catégorie, unité, prix d’achat et de vente, seuil minimum, stock initial. <b>Stock</b> : quantité disponible pour chaque produit (calculée à partir des achats et ventes), avec alerte quand le stock passe sous le seuil minimum. Un export CSV des mouvements de stock (entrées/sorties) est disponible pour la période choisie.</p><p><b>Inventaire</b> : permet de comparer le stock théorique (calculé) au stock réellement compté. Renseignez le stock compté pour les produits vérifiés, laissez vide les autres, puis validez : le stock est corrigé pour correspondre au comptage et l’écart (quantité et valeur) est conservé dans un historique consultable et exportable en CSV.</p>')
 +D('💰 Créances / 🧾 Dettes / 🏦 Trésorerie','<p><b>Créances</b> : sommes que les clients doivent encore payer, classées par ancienneté. <b>Dettes</b> : sommes dues aux fournisseurs. <b>Trésorerie</b> : soldes Espèces / Banque / Mobile Money, avec possibilité d’ajouter un mouvement manuel (encaissement, décaissement) ou un transfert entre modes de paiement.</p>')
-+D('🏛️ Rapport de direction','<p>Rapport complet et détaillé (résumé exécutif, indicateurs, ventes par produit, clients, fournisseurs, stock, créances/dettes par ancienneté, trésorerie) prêt à télécharger en HTML (imprimable en PDF depuis le navigateur), à copier, ou à partager par WhatsApp/e-mail.</p>')
-+D('📥 Import / Export &amp; sauvegardes','<p><b>Export</b> : chaque module de données peut être exporté en CSV ; « Tout (JSON) » télécharge une sauvegarde complète des données.</p><p><b>Import</b> : un fichier CSV ou une sauvegarde JSON peut être réimporté pour restaurer ou compléter les données.</p><p><b>Excel (.xlsx)</b> : exporte toutes les données dans un classeur à plusieurs feuilles, modifiable puis réimportable.</p><p><b>🗓️ Points de sauvegarde hebdomadaires</b> : un point est enregistré automatiquement chaque semaine (dès qu’il y a des données). La liste, consultable dans <b>⚙️ Données</b>, permet de voir un aperçu chiffré de chaque semaine (👁️ Aperçu), de la télécharger, ou de <b>restaurer</b> l’ensemble des données à l’état de cette semaine-là — les 26 dernières semaines sont conservées, et un point peut aussi être créé manuellement à tout moment.</p><p><b>🌐 Sauvegarde HTML complète</b> : télécharge un seul fichier .html contenant l’application <b>et</b> toutes les données — à conserver sur une clé USB, par e-mail ou sur un Drive ; il suffit de l’ouvrir dans un navigateur pour tout retrouver.</p><p><b>☁️ OneDrive</b> : envoie la sauvegarde par e-mail pré-rempli vers une adresse Outlook/OneDrive.</p><p class="mute">Conseil : faites une sauvegarde régulièrement, surtout avant une manipulation importante.</p>')
++D('🏛️ Rapport de direction','<p>Rapport complet et détaillé (résumé exécutif, indicateurs, ventes par produit, clients, fournisseurs, stock, créances/dettes par ancienneté, trésorerie) prêt à télécharger en HTML (imprimable en PDF depuis le navigateur), à copier, ou à envoyer via le partage de l’appareil.</p>')
++D('📥 Import / Export &amp; sauvegardes','<p><b>Export</b> : chaque module de données peut être exporté en CSV ; la sauvegarde de secours de l’application est disponible en HTML complet.</p><p><b>Import</b> : un fichier CSV ou une sauvegarde JSON peut être réimporté pour restaurer ou compléter les données.</p><p><b>Excel (.xlsx)</b> : exporte toutes les données dans un classeur à plusieurs feuilles, modifiable puis réimportable.</p><p><b>🗓️ Points de sauvegarde hebdomadaires</b> : un point est enregistré automatiquement chaque semaine (dès qu’il y a des données). La liste, consultable dans <b>⚙️ Données</b>, permet de voir un aperçu chiffré de chaque semaine (👁️ Aperçu), de la télécharger, ou de <b>restaurer</b> l’ensemble des données à l’état de cette semaine-là — les 26 dernières semaines sont conservées, et un point peut aussi être créé manuellement à tout moment.</p><p><b>🌐 Sauvegarde HTML complète</b> : télécharge un seul fichier .html contenant l’application <b>et</b> toutes les données — à conserver sur une clé USB ou via le moyen de partage de votre appareil ; il suffit de l’ouvrir dans un navigateur pour tout retrouver.</p><p class="mute">Conseil : faites une sauvegarde régulièrement, surtout avant une manipulation importante.</p>')
 +D('🔒 Sécurité et accès','<p>Trois niveaux de protection, cumulables, se règlent dans <b>⚙️ Données</b> :</p><ul><li><b>Verrouillage de l’application</b> : un seul mot de passe protège l’accès à toute l’application.</li><li><b>Verrouillage par module</b> : un mot de passe distinct peut être défini pour un module précis (ex. Trésorerie), redemandé à chaque nouvelle ouverture.</li><li><b>👤 Comptes &amp; accès</b> : page de connexion avec identifiants nominatifs et rôles (Administrateur, Ventes, Achats, Comptabilité) — chaque rôle ne voit que les modules qui le concernent. Dès qu’un compte est créé, la connexion devient obligatoire pour tout le monde. Pour un compte non-administrateur, le bouton <b>🔧 Personnaliser les accès</b> permet d’ajuster finement ses modules visibles : cocher un module en plus <b>étend</b> l’accès au-delà de ce que donne le rôle, en décocher un <b>restreint</b> l’accès en-deçà — utile pour donner un accès ponctuel à un module supplémentaire ou, au contraire, cacher un module sensible à une personne précise sans changer son rôle.</li></ul><p>Le bouton <b>👁️ Lecture seule</b> dans l’en-tête (accessible sans mot de passe, même sur l’écran de connexion) donne un accès instantané au Tableau de bord, au Compte de résultat et au Rapport de direction, sans possibilité de modifier quoi que ce soit ni de voir les autres modules. Pratique pour montrer les chiffres à un tiers (associé, banquier…) sans lui donner de compte. Le bouton <b>✖️ Quitter la lecture seule</b> permet d’en sortir.</p>')
 +D('🎯 Budget / 📦 Objectifs produits / 🔮 Scénarios','<p><b>Budget</b> : fixez, mois par mois, un objectif de chiffre d’affaires et un budget par catégorie de charges. Le module compare ensuite ces objectifs au réel sur la période affichée en haut de page (les mois budgétisés inclus dans cette période sont additionnés automatiquement).</p><p><b>Objectifs produits</b> : fixez un objectif de quantité à vendre par produit pour un mois donné, comparé aux ventes réelles de la période affichée (quantité, chiffre d’affaires estimé et réalisé, % atteint).</p><p><b>Scénarios</b> : simulez l’effet d’une variation de prix de vente, de volume vendu, de coût d’achat ou de charges sur la marge et le résultat, à partir des chiffres réels de la période affichée. Chaque simulation peut être nommée et enregistrée pour être comparée aux autres plus tard (👁️ Détail affiche le calcul complet, 🗑️ la supprime).</p>')
 +D('💡 Astuces','<ul><li>Les données restent stockées dans ce navigateur (et dans ce fichier si vous utilisez la sauvegarde HTML) — pensez à exporter régulièrement.</li><li>Utilisez un mot de passe différent pour chaque protection si vous les combinez.</li><li>En cas d’erreur de saisie, le bouton ↩️ (annuler) permet de revenir rapidement en arrière.</li></ul>');
@@ -945,270 +1131,552 @@ bn.style.cssText='position:fixed;left:12px;right:12px;bottom:calc(12px + env(saf
 bn.innerHTML='<span style="flex:1 1 260px">🌐 Ce fichier contient une sauvegarde'+esc(dt)+'. Les données de ce navigateur sont différentes.</span><button data-yb="apply">Restaurer cette sauvegarde</button><button class="ghost" data-yb="skip">Garder mes données</button>';document.body.appendChild(bn)}}
 })();
 </script>
-<script type="module" id="ytrade-firebase-module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, serverTimestamp, collection, addDoc, onSnapshot, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
 
-const firebaseConfig={
-  apiKey:"AIzaSyAAlunHBOssaZemHJ0LzyFqqWFjUpqf-Jk",
-  authDomain:"y-trade.firebaseapp.com",
-  projectId:"y-trade",
-  storageBucket:"y-trade.firebasestorage.app",
-  messagingSenderId:"594448522138",
-  appId:"1:594448522138:web:cd3985bf190b778a193823"
-};
-const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app);
-window.yTradeFirebase={app,auth,db,signInWithEmailAndPassword,signOut,onAuthStateChanged,doc,getDoc,setDoc,serverTimestamp,collection,addDoc,onSnapshot,query,orderBy,limit};
-window.dispatchEvent(new Event('ytrade-firebase-ready'));
-</script>
 <script>
-// =============================================================
-// Y-TRADE V2 — intégration des évolutions sur le fichier maître
-// Aucun module/interface du fichier source n'est supprimé.
-// =============================================================
+/* =========================================================
+   Y-TRADE V2 — Firebase Authentication + Cloud + Messagerie
+   Socle : fichier utilisateur fourni sans suppression d’interface.
+   ========================================================= */
 (()=>{
-'use strict';
-const FB=()=>window.yTradeFirebase||null;
-const CLOUD=['companies','y-trade','state','main'];
-const MSG=['companies','y-trade','messages'];
-const SYNC_DELAY=8000, SYNC_MAX=10000, RETRY=2000;
-const META='yt_cloud_meta_v3', DIRTY='yt_cloud_dirty_v3', LOCAL_BEFORE='yt_local_before_cloud_v3';
-let fbReady=false,fbUser=null,fbProfile=null,guest=false,bootDone=false,booting=false,loading=false;
-let syncTimer=0,maxTimer=0,retryTimer=0,dirtyAt=0,msgUnsub=null,messages=[],conflict=false;
+  const FT=()=>window.yTradeFirebase||null;
+  window.yTradeAuth=window.yTradeAuth||{
+    enabled:true,ready:false,authenticated:false,user:null,
+    profile:null,name:'',email:'',role:'',actif:false,
+    extra:[],deny:[],ro:false,noEntry:[],mask:[],maskDeny:[]
+  };
 
-function fErr(e){const c=e&&e.code||'';if(c.includes('permission-denied'))return'Accès Firestore refusé par les règles de sécurité.';if(c.includes('unauthenticated'))return'Session Firebase expirée.';if(c.includes('unavailable')||c.includes('failed-precondition'))return'Firestore temporairement indisponible.';if(c.includes('network'))return'Connexion Internet indisponible.';return e&&e.message?e.message:'Erreur Firebase inconnue.'}
-function getMeta(){try{return JSON.parse(localStorage.getItem(META)||'{}')||{}}catch(e){return{}}}
-function setMeta(v){try{localStorage.setItem(META,JSON.stringify(v))}catch(e){}}
-function dirty(){try{return localStorage.getItem(DIRTY)==='1'}catch(e){return false}}
-function setDirty(v){try{v?localStorage.setItem(DIRTY,'1'):localStorage.removeItem(DIRTY)}catch(e){}}
-function cloudMs(d){try{if(d&&d.updatedAtMs)return +d.updatedAtMs||0;if(d&&d.updatedAt&&typeof d.updatedAt.toMillis==='function')return d.updatedAt.toMillis()}catch(e){}return 0}
-function normalize(incoming){
- if(!incoming||!Array.isArray(incoming.products)||!Array.isArray(incoming.sales)||!Array.isArray(incoming.purchases))throw new Error('Les données cloud sont invalides.');
- const old=S;
- const base=fresh();
- const copy=JSON.parse(JSON.stringify(incoming));
- S=Object.assign(base,copy);
- ['products','clients','suppliers','sales','purchases','expenses','mv'].forEach(k=>{if(!Array.isArray(S[k]))S[k]=[]});
- if(!Number.isFinite(+S.n)){
-  const ids=[...S.products,...S.clients,...S.suppliers,...S.sales,...S.purchases,...S.expenses,...(S.staff||[])].map(x=>+x.id||0);
-  S.n=Math.max(1,...ids)+1;
- }
- return old;
-}
+  const authState=window.yTradeAuth;
+  const maskDenyFor=a=>{
+    const s=new Set(),mk=new Set(a.mask||[]);
+    if(mk.has('cost'))['pnl','rent','scenario','dir'].forEach(x=>s.add(x));
+    if(mk.has('sal'))['staff','tre','pnl','rent','dir'].forEach(x=>s.add(x));
+    if(mk.has('pin'))s.add('bak');
+    return [...s];
+  };
 
-// Sauvegarde locale conservée et branchée sur l'auto-sync.
-const originalSave=save;
-save=function(){
- originalSave();
- if(loading||guest||!bootDone||!fbUser||!fbProfile||fbProfile.role!=='Administrateur')return;
- setDirty(true);scheduleSync();
-};
-
-async function syncNow(reason='auto',force=false){
- const f=FB();
- if(!f||!f.db||!fbUser||!fbProfile||fbProfile.actif===false||fbProfile.role!=='Administrateur')return false;
- clearTimeout(retryTimer);
- try{
-  const ref=f.doc(f.db,...CLOUD);
-  const snap=await f.getDoc(ref),remote=snap.exists()?snap.data():null,m=getMeta(),rm=cloudMs(remote),lm=+m.updatedAtMs||0;
-  if(!force&&dirty()&&lm&&rm&&rm>lm){
-   conflict=true;
-   try{localStorage.setItem('yt_conflict_backup_html',htmlBackup())}catch(e){}
-   toast('⚠️ Conflit cloud détecté : vos données locales sont conservées.');
-   return false;
+  function fbLoginPanel(){
+    const guestOk=(()=>{try{return sessionStorage.getItem('yt_guest')==='1'}catch(e){return false}})();
+    return `<div class="login-wrap">
+      <div class="login-card">
+        <div class="login-brand">🏬</div>
+        <h1 class="login-title">Y-TRADE &amp; SERVICES SARL</h1>
+        <p class="login-sub">${authState.ready?'Connectez-vous pour accéder à l’application.':'Connexion sécurisée en cours de chargement…'}</p>
+        ${authState.ready?`
+        <span class="login-lbl">Adresse e-mail</span>
+        <input id="fbEmail" type="email" placeholder="Adresse e-mail" autocomplete="username" autofocus>
+        <span class="login-lbl">Mot de passe</span>
+        <input id="fbPassword" type="password" placeholder="Mot de passe" autocomplete="current-password">
+        <button data-fb-login="1" class="login-btn">🔓 Se connecter</button>
+        <button data-guest="1" class="ghost login-guest">👁️ Accès visiteur</button>
+        <p class="login-foot">Authentification sécurisée par Firebase. Les droits sont déterminés par votre profil utilisateur dans Firestore.</p>
+        ${guestOk?'<p class="mute">Le mode visiteur est mémorisé sur cet appareil.</p>':''}
+        `:''}
+      </div>
+    </div>`;
   }
-  const data=JSON.parse(JSON.stringify(S)),json=JSON.stringify(data),size=new Blob([json]).size;
-  if(size>900000)throw new Error('Données trop volumineuses pour la première version cloud.');
-  const now=Date.now(),version=(+m.version||0)+1;
-  await f.setDoc(ref,{data,updatedAt:f.serverTimestamp(),updatedAtMs:now,updatedBy:fbUser.uid,updatedByEmail:fbUser.email||'',version});
-  setMeta({updatedAtMs:now,version,user:fbUser.uid});setDirty(false);conflict=false;
-  if(reason!=='silent')toast('☁️ Données synchronisées automatiquement');
-  return true;
- }catch(e){
-  console.error('Y-TRADE auto-sync',e);
-  if(reason==='auto'){clearTimeout(retryTimer);retryTimer=setTimeout(()=>syncNow('retry'),RETRY)}
-  return false;
- }
-}
-function scheduleSync(){
- clearTimeout(syncTimer);clearTimeout(maxTimer);
- if(!bootDone||loading||guest||!fbUser||!fbProfile||fbProfile.role!=='Administrateur')return;
- if(!dirtyAt)dirtyAt=Date.now();
- syncTimer=setTimeout(()=>{syncNow('auto');dirtyAt=0},SYNC_DELAY);
- const remain=Math.max(0,SYNC_MAX-(Date.now()-dirtyAt));
- maxTimer=setTimeout(()=>{syncNow('auto');dirtyAt=0},remain);
-}
 
-async function autoLoad(){
- if(booting||!fbUser||!fbProfile||guest)return;
- booting=true;
- try{
-  const f=FB();if(!f||!f.db)return;
-  const snap=await f.getDoc(f.doc(f.db,...CLOUD));
-  if(!snap.exists()){bootDone=true;render();return}
-  const cloud=snap.data()||{},incoming=cloud.data,rm=cloudMs(cloud),m=getMeta(),lm=+m.updatedAtMs||0;
-  if(!incoming){bootDone=true;render();return}
-  if(!lm){
-   try{localStorage.setItem(LOCAL_BEFORE,JSON.stringify(S))}catch(e){}
-   loading=true;normalize(incoming);originalSave();loading=false;
-   setMeta({updatedAtMs:rm||Date.now(),version:+cloud.version||1,user:cloud.updatedBy||''});setDirty(false);conflict=false;
-   toast('☁️ Données cloud restaurées automatiquement');
-  }else if(dirty()&&rm>lm){
-   conflict=true;try{localStorage.setItem('yt_conflict_backup_html',htmlBackup())}catch(e){}
-   toast('⚠️ Conflit détecté : modifications locales conservées.');
-  }else if(!dirty()&&rm>lm){
-   try{localStorage.setItem(LOCAL_BEFORE,JSON.stringify(S))}catch(e){}
-   loading=true;normalize(incoming);originalSave();loading=false;
-   setMeta({updatedAtMs:rm,version:+cloud.version||1,user:cloud.updatedBy||''});setDirty(false);conflict=false;
-   toast('☁️ Nouvelles données restaurées automatiquement');
+  async function loadProfile(user){
+    const f=FT();
+    if(!f?.db||!f.doc||!f.getDoc)return false;
+    try{
+      const snap=await f.getDoc(f.doc(f.db,'users',user.uid));
+      if(!snap.exists()){toast('⚠️ Aucun profil Firestore associé à ce compte.');return false}
+      const d=snap.data()||{};
+      if(d.actif===false){toast('⛔ Ce compte est désactivé.');return false}
+      authState.user=user;
+      authState.profile=d;
+      authState.authenticated=true;
+      authState.name=d.nom||d.name||user.email||'Utilisateur';
+      authState.email=user.email||'';
+      authState.role=d.role||'Ventes';
+      authState.actif=d.actif!==false;
+      authState.extra=Array.isArray(d.extra)?d.extra:[];
+      authState.deny=Array.isArray(d.deny)?d.deny:[];
+      authState.ro=!!d.ro;
+      authState.noEntry=Array.isArray(d.noEntry)?d.noEntry:[];
+      authState.mask=Array.isArray(d.mask)?d.mask:[];
+      authState.maskDeny=maskDenyFor(authState);
+      authState.uid=user.uid;
+      try{sessionStorage.setItem('yt_sess',user.uid)}catch(e){}
+      ui.v=({Administrateur:'dash',Ventes:'sales',Achats:'purchases','Comptabilité':'tre'}[authState.role]||'dash');
+      ui.arm='';
+      return true;
+    }catch(err){
+      console.error('Profil Firebase:',err);
+      toast('⚠️ Impossible de charger votre profil. '+(err&&err.message||''));
+      return false;
+    }
   }
-  bootDone=true;render();
- }catch(e){
-  bootDone=true;render();console.warn('Auto-load Firestore:',fErr(e));
- }finally{booting=false}
-}
 
-// ---------- Messagerie ----------
-NAV.push(['💬 Communication',[['messages','💬 Messagerie']]]);
-TT.messages='💬 Messagerie';
-const roleIcon={Administrateur:'🔐',Ventes:'🛒',Achats:'📦','Comptabilité':'🧮'};
-const ACCESS={
- Administrateur:null,
- Ventes:new Set(['dash','sales','clients','products','stock','rec','rap','docs','inv','objp','messages','aide']),
- Achats:new Set(['dash','purchases','suppliers','products','stock','det','rap','docs','inv','messages','aide']),
- 'Comptabilité':new Set(['dash','expenses','staff','tre','rec','det','pnl','rent','rap','dir','docs','budget','scenario','objp','messages','aide'])
-};
-function canModule(v){if(guest)return new Set(['dash','pnl','dir','aide']).has(v);if(!fbProfile)return false;if(fbProfile.role==='Administrateur')return true;const base=ACCESS[fbProfile.role]||new Set();if((fbProfile.deny||[]).includes(v))return false;if((fbProfile.extra||[]).includes(v))return true;return base.has(v)}
-function msgView(){
- const canSend=!!fbUser&&!!fbProfile&&fbProfile.actif!==false&&!fbProfile.ro&&!guest;
- const rows=messages.slice().sort((a,b)=>(a.createdAtMs||0)-(b.createdAtMs||0));
- return '<div class="box" style="margin-bottom:12px"><h2>💬 Messagerie interne</h2><p class="mute">Canal général — les messages sont synchronisés en temps réel entre les appareils connectés.</p>'+
- '<div id="yMessages" style="display:grid;gap:8px;max-height:48vh;overflow:auto;padding:4px 2px">'+
- (rows.length?rows.map(m=>'<div style="border:1px solid var(--line);border-radius:10px;padding:10px 12px"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><b>'+esc(m.senderName||m.senderEmail||'Utilisateur')+'</b><span class="mute" style="font-size:12px">'+esc(m.timeLabel||'')+'</span></div><div style="margin-top:5px;white-space:pre-wrap;overflow-wrap:anywhere">'+esc(m.text||'')+'</div></div>').join(''):'<p class="mute">Aucun message pour le moment.</p>')+
- '</div>'+ (canSend?'<div class="box" style="margin-top:12px;background:var(--bg)"><h3 style="margin-top:0">✍️ Nouveau message</h3><textarea id="yMsgInput" maxlength="2000" placeholder="Écrivez votre message ici…" style="min-height:140px;font:15px/1.5 inherit"></textarea><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:7px"><span class="mute" id="yMsgCount">0 / 2000</span><button data-ym-send="1">📨 Envoyer</button></div></div>':'<p class="mute" style="margin-top:12px">Lecture seule : l’envoi des messages est désactivé.</p>')+'</div>';
-}
-V.messages=msgView;
-async function startMessages(){
- if(msgUnsub){msgUnsub();msgUnsub=null}
- const f=FB();if(!f||!f.db||!fbUser||!fbProfile||fbProfile.actif===false)return;
- try{
-  const q=f.query(f.collection(f.db,...MSG),f.orderBy('createdAtMs','asc'),f.limit(100));
-  msgUnsub=f.onSnapshot(q,snap=>{
-   messages=snap.docs.map(d=>{const x=d.data()||{};let tm=x.timeLabel||'';if(!tm&&x.createdAtMs)try{tm=new Date(x.createdAtMs).toLocaleString('fr-FR')}catch(e){}return{id:d.id,...x,timeLabel:tm}});
-   if(ui.v==='messages'){render();const box=$('#yMessages');if(box)box.scrollTop=box.scrollHeight}
-  },err=>console.error('Messagerie',err));
- }catch(e){console.error('Messagerie init',e)}
-}
-async function sendMessage(){
- const i=$('#yMsgInput'),textMsg=i?i.value.trim():'';if(!textMsg)return toast('Écrivez un message.');
- const f=FB();if(!f||!f.db||!fbUser||!fbProfile)return toast('⚠️ Connexion Firebase requise.');
- try{await f.addDoc(f.collection(f.db,...MSG),{roomId:'general',text:textMsg,senderUid:fbUser.uid,senderName:fbProfile.nom||fbProfile.name||fbUser.email||'Utilisateur',senderEmail:fbUser.email||'',createdAt:f.serverTimestamp(),createdAtMs:Date.now(),timeLabel:new Date().toLocaleString('fr-FR')});if(i)i.value='';const c=$('#yMsgCount');if(c)c.textContent='0 / 2000';toast('📨 Message envoyé')}catch(e){toast('❌ Envoi impossible — '+fErr(e))}
-}
+  function setAuthOff(){
+    authState.user=null;authState.profile=null;authState.authenticated=false;
+    authState.name='';authState.email='';authState.role='';authState.actif=false;
+    authState.extra=[];authState.deny=[];authState.ro=false;authState.noEntry=[];authState.mask=[];authState.maskDeny=[];
+    startupCloudCheckDone=false;autoLoadDone=false;autoSyncPending=false;
+    clearTimeout(autoSyncTimer);clearTimeout(autoSyncMaxTimer);
+    autoSyncTimer=autoSyncMaxTimer=null;
+    try{sessionStorage.removeItem('yt_sess')}catch(e){}
+  }
 
-document.addEventListener('input',e=>{if(e.target.id==='yMsgInput'){const c=$('#yMsgCount');if(c)c.textContent=e.target.value.length+' / 2000'}});
-document.addEventListener('keydown',e=>{if(e.target&&e.target.id==='yMsgInput'&&e.ctrlKey&&e.key==='Enter'){e.preventDefault();sendMessage()}});
-document.addEventListener('click',e=>{const b=e.target.closest('[data-ym-send]');if(b){e.preventDefault();sendMessage()}});
+  function waitFirebase(){
+    const f=FT();
+    if(!f?.auth||!f.onAuthStateChanged){
+      authState.ready=false;
+      render();
+      return;
+    }
+    f.onAuthStateChanged(f.auth,async user=>{
+      authState.ready=false;
+      if(!user){
+        setAuthOff();
+        authState.ready=true;
+        render();
+        return;
+      }
+      const ok=await loadProfile(user);
+      authState.ready=true;
+      if(ok){
+        if(authState.role==='Administrateur'){
+          startupCloudCheckDone=false;
+          await autoLoadFromFirestore();
+          startupCloudCheckDone=true;
+          if(autoSyncPending)scheduleAutoSync();
+        }else{
+          startupCloudCheckDone=true;
+          autoSyncPending=false;
+        }
+      }else{
+        try{await f.signOut(f.auth)}catch(e){}
+      }
+      render();
+    });
+  }
 
-// ---------- Sauvegarde HTML + Envoyer vers ----------
-function downloadHtml(name,text){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'text/html;charset=utf-8'}));a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),2000)}
-const htmlBase=htmlBackup;
-htmlBackup=function(){
- const c=JSON.parse(JSON.stringify(S));c.impLock=true;
- let th=null;try{th=JSON.parse(localStorage.getItem('comptoir_th'))}catch(e){}
- const payload=JSON.stringify({v:3,savedAt:new Date().toISOString(),data:c,theme:th}).replace(/</g,'\\u003c');
- const O='<scr'+'ipt',C='</scr'+'ipt>';
- const scripts=[...document.querySelectorAll('body>script')].filter(x=>x.id!=='y-trade-backup');
- const bodyScripts=scripts.map(x=>x.src?O+' src="'+x.getAttribute('src')+'"'+(x.type?' type="'+x.type+'"':'')+'>'+C:(x.type?O+' type="'+x.type+'">'+x.textContent+C:O+'>'+x.textContent+C)).join('\n');
- return '<!DOCTYPE html><html lang="'+(document.documentElement.lang||'fr')+'"><head>'+(document.head.innerHTML)+'</head><body>'+SRC0.body+O+' type="application/json" id="y-trade-backup">'+payload+C+bodyScripts+'</body></html>';
-};
-function shareCurrent(){
- let title='Y-TRADE & SERVICES SARL',textShare='Sauvegarde HTML complète de Y-TRADE & SERVICES SARL.',blob=new Blob([htmlBackup()],{type:'text/html'}),fn='Y-TRADE-'+today+'-'+hm(new Date())+'.html';
- if(['rap','dir'].includes(ui.v)&&window.__c&&window.__c.rt){textShare=window.__c.rt;fn='rapport-direction-'+today+'.html'}
- if(navigator.share){try{const file=new File([blob],fn,{type:'text/html'});if(navigator.canShare&&navigator.canShare({files:[file]})){navigator.share({title,text:textShare,files:[file]}).catch(()=>{});return}navigator.share({title,text:textShare}).catch(()=>{});return}catch(e){}}
- downloadHtml(fn,blob instanceof Blob?blob:htmlBackup());toast('📤 Fichier prêt à être partagé depuis vos téléchargements');
-}
-// Retire uniquement les boutons de partage séparés WhatsApp/e-mail et OneDrive ; les autres fonctions restent.
-function cleanLegacyShare(){
- document.querySelectorAll('[data-shareapp],[data-d4="wa"],[data-d4="mail"]').forEach(b=>b.remove());
- document.querySelectorAll('button').forEach(b=>{const t=(b.textContent||'').toLowerCase();if(t.includes('whatsapp')||t.includes('e-mail')||t.includes('onedrive'))b.remove()});
- if(!$('#yShare')&&$('header'))$('header').querySelector('span')?.insertAdjacentHTML('beforeend','<button class="ghost" id="yShare" data-yshare="1" title="Envoyer vers WhatsApp, e-mail, partage natif…">📤 Envoyer vers</button>');
-}
-document.addEventListener('click',e=>{const b=e.target.closest('[data-yshare]');if(!b)return;e.preventDefault();shareCurrent()});
+  function startAuth(){
+    authState.ready=false;
+    if(FT())waitFirebase();
+    else window.addEventListener('ytrade-firebase-ready',waitFirebase,{once:true});
+  }
 
-// Ajout de sauvegarde/restauration HTML dans le module Données en conservant tout le contenu existant.
-const oldBak=V.bak;
-V.bak=function(){
- const top='<div class="box" style="margin-bottom:12px"><h2>🌐 Sauvegarde HTML complète</h2><p class="mute">Un seul fichier HTML contenant l’application et les données. Cette sauvegarde est indépendante de la synchronisation automatique et constitue votre secours hors ligne.</p><div class="tools"><button data-yhtml="save">🌐 Télécharger la sauvegarde HTML</button><input id="yHtmlFile" type="file" accept=".html,.htm,text/html" hidden></div></div>';
- return top+oldBak();
-};
-document.addEventListener('click',e=>{const b=e.target.closest('[data-yhtml]');if(!b)return;e.preventDefault();if(b.dataset.yhtml==='save'){if(guest)return toast('🔒 Sauvegarde réservée à un compte connecté.');downloadHtml('Y-TRADE-'+today+'-'+hm(new Date())+'.html',htmlBackup());toast('🌐 Sauvegarde HTML complète générée')}else{$('#yHtmlFile')?.click()}});
-document.addEventListener('change',e=>{if(e.target.id!=='yHtmlFile')return;const file=e.target.files&&e.target.files[0];if(!file)return;const rd=new FileReader();rd.onload=()=>{try{const d=new DOMParser().parseFromString(String(rd.result),'text/html'),n=d.querySelector('#y-trade-backup');if(!n)throw 0;const p=JSON.parse(n.textContent||'');if(!p.data||!Array.isArray(p.data.products)||!Array.isArray(p.data.sales))throw 0;try{localStorage.setItem(LOCAL_BEFORE,JSON.stringify(S))}catch(x){}loading=true;normalize(p.data);originalSave();loading=false;setDirty(false);render();toast('✅ Sauvegarde HTML restaurée')}catch(err){toast('❌ Fichier HTML invalide ou incomplet.')}e.target.value=''};rd.readAsText(file)});
+  document.addEventListener('click',async e=>{
+    const b=e.target.closest('[data-fb-login],[data-fb-logout]');
+    if(!b)return;
+    const f=FT();
+    if(!f)return toast('⚠️ Firebase n’est pas disponible.');
+    if(b.dataset.fbLogin){
+      const email=$('#fbEmail')?.value.trim()||'',password=$('#fbPassword')?.value||'';
+      if(!email)return toast('Entrez votre adresse e-mail.');
+      if(!password)return toast('Entrez votre mot de passe.');
+      b.disabled=true;b.textContent='⏳ Connexion…';
+      try{
+        await f.signInWithEmailAndPassword(f.auth,email,password);
+      }catch(err){
+        const code=err&&err.code||'',m=
+          code==='auth/invalid-credential'?'E-mail ou mot de passe incorrect.':
+          code==='auth/invalid-email'?'Adresse e-mail invalide.':
+          code==='auth/user-disabled'?'Ce compte Firebase est désactivé.':
+          code==='auth/too-many-requests'?'Trop de tentatives. Réessayez plus tard.':
+          'Connexion impossible.';
+        toast('❌ '+m);b.disabled=false;b.textContent='🔓 Se connecter';
+      }
+    }else if(b.dataset.fbLogout){
+      try{await f.signOut(f.auth)}catch(err){toast('⚠️ Impossible de se déconnecter.')}
+    }
+  });
 
-// ---------- Auth Firebase ----------
-function loginPanel(){return'<div class="login-wrap"><div class="login-card"><div class="login-brand">🏬</div><h1 class="login-title">Y-TRADE &amp; SERVICES SARL</h1><p class="login-sub">Connexion sécurisée</p><span class="login-lbl">Adresse e-mail</span><input id="fbEmail" type="email" placeholder="Adresse e-mail" autocomplete="username"><span class="login-lbl">Mot de passe</span><input id="fbPassword" type="password" placeholder="Mot de passe" autocomplete="current-password"><button data-fb-login="1" class="login-btn">🔓 Se connecter</button><button data-fb-guest="1" class="ghost login-guest">👁️ Accès visiteur (lecture seule)</button><p class="login-foot">Connexion sécurisée par Firebase Authentication.</p></div></div>'}
-function loadingPanel(){return'<div class="login-wrap"><div class="login-card"><div class="login-brand">🏬</div><h1 class="login-title">Y-TRADE &amp; SERVICES SARL</h1><p class="login-sub">Connexion sécurisée en cours…</p></div></div>'}
-function profilePanel(){if(guest||!fbProfile)return'';return '<div class="box" style="margin-bottom:12px"><h2>👤 Compte connecté</h2><div class="kg">'+K('Utilisateur',esc(fbProfile.nom||fbProfile.name||fbUser?.email||''))+K('Rôle',(roleIcon[fbProfile.role]||'👤')+' '+esc(fbProfile.role||''))+K('Statut',fbProfile.actif===false?'⛔ Désactivé':'✅ Actif')+'</div></div>'}
-function addHeaderControls(){
- cleanLegacyShare();
- const h=$('header');if(!h)return;
- let span=h.querySelector(':scope > span');if(!span){span=document.createElement('span');span.style='display:flex;gap:6px;flex-wrap:wrap;align-items:center';h.appendChild(span)}
- if(!span.querySelector('#yLogout')){const b=document.createElement('button');b.className='ghost';b.id='yLogout';b.dataset.fbLogout='1';b.textContent='🚪 Déconnexion';span.appendChild(b)}
- const lo=$('#yLogout');if(lo)lo.style.display=guest?'none':'';
-}
-const baseRender=render;
-render=function(){
- if(!fbReady){$('#nav').style.opacity='.35';$('#nav').style.pointerEvents='none';$('#ttl').textContent='';$('#per').style.display='none';$('#main').innerHTML=loadingPanel();return}
- if(!fbUser&&!guest){$('#nav').style.opacity='.35';$('#nav').style.pointerEvents='none';$('#main').innerHTML=loginPanel();$('#ttl').textContent='';$('#per').style.display='none';return}
- // Le système de connexion local du fichier d'origine est conservé dans le code, mais Firebase Authentication devient l'entrée principale.
- const oldAccounts=S.accounts;S.accounts=[];
- try{baseRender()}finally{S.accounts=oldAccounts}
- // Rendre visibles les modules du fichier maître. Les permissions Firebase s'appliquent seulement ensuite.
- document.querySelectorAll('#nav a').forEach(a=>{
-   const v=a.dataset.v;
-   if(!canModule(v))a.remove();
- });
- if(!canModule(ui.v)){ui.v=guest?'dash':((({Administrateur:'dash',Ventes:'sales',Achats:'purchases','Comptabilité':'tre'})[fbProfile?.role])||'dash');}
- // Refaire un rendu si le module courant a été corrigé par les permissions.
- if(!document.querySelector('#nav a.on') || !document.querySelector('#nav a.on[data-v="'+ui.v+'"]')){
-   const oldAccounts2=S.accounts;S.accounts=[];try{baseRender()}finally{S.accounts=oldAccounts2}
-   document.querySelectorAll('#nav a').forEach(a=>{if(!canModule(a.dataset.v))a.remove()});
-   document.querySelectorAll('#nav h3').forEach(h=>{if(!h.nextElementSibling||h.nextElementSibling.tagName!=='A')h.remove()});
- }
- document.querySelectorAll('#nav h3').forEach(h=>{if(!h.nextElementSibling||h.nextElementSibling.tagName!=='A')h.remove()});
- $('#nav').style.opacity='';$('#nav').style.pointerEvents='';
- addHeaderControls();
- const rb=$('#rb');if(rb)rb.textContent=guest?'👁️ Visiteur · Lecture seule':'👤 '+(fbProfile?.nom||fbProfile?.name||fbUser?.email||'Utilisateur')+' · '+(fbProfile?.role||'');
- if(conflict&&!$('#yConflict'))$('#main').insertAdjacentHTML('afterbegin','<div id="yConflict" class="box" style="margin-bottom:12px;border-left:5px solid var(--neg)"><b>⚠️ Conflit de synchronisation</b><p class="mute" style="margin:5px 0 0">Une version cloud plus récente a été détectée. Vos données locales restent conservées.</p></div>');
- if(guest){document.querySelectorAll('#main form[data-f]').forEach(f=>f.remove());document.querySelectorAll('#main button[data-act],#main button[data-yhtml],#main [data-ivsave],#main button[data-snr],#main button[data-scd]').forEach(b=>b.remove())}
- cleanLegacyShare();
-};
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Enter'&&(e.target?.id==='fbEmail'||e.target?.id==='fbPassword')){
+      document.querySelector('[data-fb-login]')?.click();
+    }
+  });
 
-// Auth actions
-document.addEventListener('click',async e=>{const b=e.target.closest('[data-fb-login],[data-fb-logout],[data-fb-guest]');if(!b)return;const f=FB();if(!f)return toast('⚠️ Firebase indisponible.');
- if(b.dataset.fbGuest){guest=true;fbUser=null;fbProfile=null;fbReady=true;bootDone=true;ui.v='dash';render();return}
- if(b.dataset.fbLogout){try{if(msgUnsub){msgUnsub();msgUnsub=null}await f.signOut(f.auth)}catch(err){toast('❌ Déconnexion impossible.')}return}
- const email=($('#fbEmail')||{}).value?.trim()||'',pass=($('#fbPassword')||{}).value||'';if(!email)return toast('Entrez votre e-mail.');if(!pass)return toast('Entrez votre mot de passe.');b.disabled=true;b.textContent='⏳ Connexion…';
- try{await f.signInWithEmailAndPassword(f.auth,email,pass)}catch(err){b.disabled=false;b.textContent='🔓 Se connecter';const c=err&&err.code||'';toast(c==='auth/invalid-credential'?'E-mail ou mot de passe incorrect.':c==='auth/too-many-requests'?'Trop de tentatives.':'❌ '+fErr(err))}
-});
+  // Déconnexion Firebase dans l’en-tête
+  const addHeaderFirebaseButtons=()=>{
+    const head=document.querySelector('header span');
+    if(!head||$('#fbLogoutBtn'))return;
+    head.insertAdjacentHTML('beforeend','<button class="ghost" id="fbLogoutBtn" data-fb-logout="1" style="display:none" title="Se déconnecter de Firebase">🚪 Déconnexion</button>');
+  };
 
-async function initAuth(){const f=FB();if(!f||!f.auth){fbReady=true;render();return}f.onAuthStateChanged(f.auth,async user=>{
- fbUser=user||null;fbProfile=null;guest=false;bootDone=false;fbReady=true;
- if(!user){render();return}
- try{
-  const snap=await f.getDoc(f.doc(f.db,'users',user.uid));if(!snap.exists())throw new Error('Aucun profil Firestore associé à ce compte.');
-  const d=snap.data()||{};if(d.actif===false){await f.signOut(f.auth);throw new Error('Compte désactivé.');}
-  fbProfile={uid:user.uid,email:user.email||'',nom:d.nom||d.name||user.email||'Utilisateur',role:d.role||'Ventes',actif:d.actif!==false,ro:!!d.ro,extra:Array.isArray(d.extra)?d.extra:[],deny:Array.isArray(d.deny)?d.deny:[]};
-  ui.v=({Administrateur:'dash',Ventes:'sales',Achats:'purchases','Comptabilité':'tre'})[fbProfile.role]||'dash';
-  await autoLoad();render();await startMessages();
- }catch(err){fbUser=null;fbProfile=null;render();toast('⚠️ '+(err&&err.message?err.message:'Connexion impossible.'))}
- });}
+  function applySecurity(){
+    if(!authState.authenticated)return;
+    document.querySelectorAll('#nav a[data-v]').forEach(a=>{
+      const v=a.dataset.v;
+      if(typeof can==='function'&&!can(v))a.remove();
+    });
+    document.querySelectorAll('#nav h3').forEach(h=>{
+      if(!h.nextElementSibling||h.nextElementSibling.tagName!=='A')h.remove();
+    });
 
-if(FB())initAuth();else window.addEventListener('ytrade-firebase-ready',initAuth,{once:true});
+    // Masquage des éléments sensibles
+    if(authState.role!=='Administrateur'&&authState.mask?.length){
+      const mk=new Set(authState.mask);
+      const maskCols=hs=>document.querySelectorAll('#main table').forEach(t=>{
+        const ths=[...t.querySelectorAll('th')],idx=[];
+        ths.forEach((th,i)=>{if(hs.some(h=>th.textContent.trim().toLowerCase()===h.toLowerCase()))idx.push(i)});
+        if(!idx.length)return;
+        t.querySelectorAll('tbody tr').forEach(tr=>idx.forEach(i=>{const td=tr.children[i];if(td)td.innerHTML='<span class="mute">•••</span>'}));
+      });
+      const maskTiles=ls=>document.querySelectorAll('#main .k').forEach(k=>{
+        const sp=k.querySelector('span');if(sp&&ls.includes(sp.textContent.trim())){k.querySelector('b')?.replaceChildren(document.createTextNode('•••'));k.querySelector('i')?.remove()}
+      });
+      if(mk.has('cost')){maskCols(['Prix d’achat','Marge','Valeur','Valeur de l’écart']);maskTiles(['Marge brute','Taux de marge','Valeur du stock'])}
+      if(mk.has('sal'))maskTiles(['Trésorerie']);
+    }
 
-// Expose des fonctions pour diagnostic/test.
-window.yTradeV2={syncNow,autoLoad,startMessages,sendMessage,htmlBackup};
+    if(authState.ro||authState.noEntry.includes(ui.v)){
+      document.querySelectorAll('#main form[data-f]').forEach(f=>f.remove());
+      document.querySelectorAll('#main [data-x],#main [data-mx],#main [data-sd],#main [data-del],#main [data-ed],#main [data-sp],#main [data-spall],#main [data-scd],#main [data-pogsave],#main [data-bgm],#main [data-mk]').forEach(el=>el.remove());
+      document.querySelectorAll('#main [data-act="pay"]').forEach(b=>(b.closest('span')||b).remove());
+      if(!$('#main .ro-note'))$('#main').insertAdjacentHTML('afterbegin','<div class="box ro-note" style="margin-bottom:12px;border-left:5px solid var(--mute)"><p class="mute">👁️ Accès en lecture seule : consultation uniquement.</p></div>');
+    }
+  }
+
+  // Le rendu Firebase est placé au-dessus du système local sans supprimer ses interfaces.
+  const r0=render;
+  render=function(){
+    const guest=(()=>{try{return sessionStorage.getItem('yt_guest')==='1'}catch(e){return false}})();
+    if(authState.enabled&&!authState.authenticated&&!guest){
+      const loading=!authState.ready;
+      $('#nav').style.opacity='.35';$('#nav').style.pointerEvents='none';
+      $('#ttl').textContent='';
+      $('#per').style.display='none';
+      $('#main').innerHTML=fbLoginPanel();
+      addHeaderFirebaseButtons();
+      $('#fbLogoutBtn').style.display='none';
+      return;
+    }
+    r0();
+    addHeaderFirebaseButtons();
+    if(authState.authenticated){
+      $('#fbLogoutBtn').style.display='';
+      $('#rb').textContent='👤 '+esc(authState.name)+' · '+esc(authState.role);
+      $('#nav').style.opacity='';$('#nav').style.pointerEvents='';
+      applySecurity();
+    }else{
+      $('#fbLogoutBtn').style.display='none';
+    }
+  };
+
+  // ---------------- Cloud Firestore ----------------
+  function cloudRef(){
+    const f=FT();
+    return f?.db&&f.doc?f.doc(f.db,'companies','y-trade','state','main'):null;
+  }
+
+  function localHasUnsyncedChanges(lastSync){
+    const c=Number(localStorage.getItem('comptoir_local_change_at')||0);
+    return !!lastSync&&c>lastSync;
+  }
+
+  function backupLocalBeforeCloud(key){
+    try{localStorage.setItem(key,JSON.stringify(S))}catch(e){console.warn('Backup local impossible:',e)}
+  }
+
+  window.yTradeSync=async function(options={}){
+    const silent=options.silent===true;
+    const f=FT();
+    if(!f?.db||!authState.user||!authState.profile)return false;
+    if(authState.actif===false||authState.role!=='Administrateur')return false;
+
+    try{
+      const ref=cloudRef();
+      if(!ref)throw new Error('Référence Firestore indisponible.');
+      const current=await f.getDoc(ref);
+      const currentData=current.exists()?current.data()||{}:{};
+      const cloudTime=Number(currentData.clientUpdatedAt||0);
+      const lastSync=Number(localStorage.getItem('comptoir_last_cloud_sync_at')||0);
+      const localChange=Number(localStorage.getItem('comptoir_local_change_at')||0);
+
+      if(current.exists()&&cloudTime&&lastSync&&cloudTime>lastSync&&localChange>lastSync){
+        backupLocalBeforeCloud('comptoir_conflict_local');
+        try{localStorage.setItem('comptoir_conflict_cloud',JSON.stringify(currentData.data||{}))}catch(e){}
+        if(!silent)toast('⚠️ Conflit détecté : synchronisation arrêtée pour éviter un écrasement.');
+        console.warn('Conflit Firestore détecté',{cloudTime,lastSync,localChange});
+        return false;
+      }
+
+      const data=JSON.parse(JSON.stringify(S)),json=JSON.stringify(data),size=new Blob([json]).size;
+      if(size>900000){
+        if(!silent)toast('⚠️ Données trop volumineuses pour Firestore.');
+        return false;
+      }
+      const clientUpdatedAt=Date.now();
+      await f.setDoc(ref,{
+        data,
+        updatedAt:f.serverTimestamp(),
+        clientUpdatedAt,
+        updatedBy:authState.user.uid,
+        updatedByEmail:authState.user.email||'',
+        version:1
+      });
+      try{
+        localStorage.setItem('comptoir_last_cloud_sync_at',String(clientUpdatedAt));
+        localStorage.setItem('comptoir_local_change_at',String(clientUpdatedAt));
+      }catch(e){}
+      if(!silent)toast(options.auto?'☁️ Sauvegarde automatique effectuée':'☁️ Données synchronisées avec Firestore');
+      return true;
+    }catch(err){
+      console.error('Erreur synchronisation Firestore:',err);
+      if(!silent)toast('❌ Synchronisation impossible. '+(err&&err.message||''));
+      return false;
+    }
+  };
+
+  async function autoLoadFromFirestore(){
+    if(autoLoadDone)return false;
+    const f=FT();
+    if(!f?.db||!authState.user||!authState.profile)return false;
+    if(authState.actif===false||authState.role!=='Administrateur'){
+      autoLoadDone=true;return false;
+    }
+    try{
+      const ref=cloudRef(),snap=await f.getDoc(ref);
+      if(!snap.exists()){autoLoadDone=true;return false}
+      const cloud=snap.data()||{},incoming=cloud.data;
+      if(!incoming||!Array.isArray(incoming.products)||!Array.isArray(incoming.sales)||!Array.isArray(incoming.purchases)){
+        autoLoadDone=true;return false;
+      }
+      const cloudTime=Number(cloud.clientUpdatedAt||0);
+      const lastSync=Number(localStorage.getItem('comptoir_last_cloud_sync_at')||0);
+      const localChange=Number(localStorage.getItem('comptoir_local_change_at')||0);
+      const firstCloudLoad=!lastSync;
+      const unsynced=localHasUnsyncedChanges(lastSync);
+
+      if(!firstCloudLoad&&unsynced&&cloudTime>lastSync){
+        backupLocalBeforeCloud('comptoir_conflict_local');
+        try{localStorage.setItem('comptoir_conflict_cloud',JSON.stringify(incoming))}catch(e){}
+        autoLoadDone=true;
+        toast('⚠️ Modification locale non synchronisée : restauration cloud différée.');
+        return false;
+      }
+
+      if(!firstCloudLoad&&cloudTime&&cloudTime<=lastSync){
+        autoLoadDone=true;return false;
+      }
+
+      backupLocalBeforeCloud('comptoir_before_auto_cloud_load');
+      const baseData=fresh();
+      S=Object.assign(baseData,JSON.parse(JSON.stringify(incoming)));
+      ['products','clients','suppliers','sales','purchases','expenses','mv'].forEach(k=>{if(!Array.isArray(S[k]))S[k]=[]});
+      if(!Number.isFinite(+S.n)){
+        const ids=[...S.products,...S.clients,...S.suppliers,...S.sales,...S.purchases,...S.expenses,...(S.staff||[])].map(x=>+x.id||0);
+        S.n=Math.max(1,...ids)+1;
+      }
+      const effective=cloudTime||Date.now();
+      localStorage.setItem(KEY,JSON.stringify(S));
+      localStorage.setItem('comptoir_last_cloud_sync_at',String(effective));
+      localStorage.setItem('comptoir_local_change_at',String(effective));
+      autoSyncPending=false;
+      clearTimeout(autoSyncTimer);clearTimeout(autoSyncMaxTimer);autoSyncTimer=autoSyncMaxTimer=null;
+      autoLoadDone=true;
+      return true;
+    }catch(err){
+      console.warn('Auto-chargement Firestore:',err);
+      setTimeout(()=>{autoLoadDone=false;autoLoadFromFirestore()},2500);
+      return false;
+    }
+  }
+
+  window.yTradeLoad=async function(){
+    if(authState.role!=='Administrateur')return toast('🔒 Chargement réservé à l’administrateur.');
+    const f=FT();
+    try{
+      const ref=cloudRef(),snap=await f.getDoc(ref);
+      if(!snap.exists())return toast('⚠️ Aucune sauvegarde cloud trouvée.');
+      const cloud=snap.data()||{},incoming=cloud.data;
+      if(!incoming||!Array.isArray(incoming.products)||!Array.isArray(incoming.sales)||!Array.isArray(incoming.purchases))throw new Error('Données Firestore invalides.');
+      backupLocalBeforeCloud('comptoir_before_cloud_load');
+      S=Object.assign(fresh(),JSON.parse(JSON.stringify(incoming)));
+      ['products','clients','suppliers','sales','purchases','expenses','mv'].forEach(k=>{if(!Array.isArray(S[k]))S[k]=[]});
+      const cloudTime=Number(cloud.clientUpdatedAt||Date.now());
+      localStorage.setItem(KEY,JSON.stringify(S));
+      localStorage.setItem('comptoir_last_cloud_sync_at',String(cloudTime));
+      localStorage.setItem('comptoir_local_change_at',String(cloudTime));
+      autoSyncPending=false;autoLoadDone=true;
+      render();
+      toast('☁️ Données chargées depuis Firestore');
+      return true;
+    }catch(err){
+      console.error(err);
+      toast('❌ Chargement impossible. '+(err&&err.message||''));
+      return false;
+    }
+  };
+
+  // Boutons Cloud de secours manuel
+  const addCloudButtons=()=>{
+    const head=document.querySelector('header span');
+    if(!head||$('#ytSyncBtn'))return;
+    head.insertAdjacentHTML('beforeend',
+      '<button class="ghost" id="ytSyncBtn" title="Synchronisation cloud immédiate">☁️ Synchroniser</button>'+
+      '<button class="ghost" id="ytLoadBtn" title="Charger depuis Firestore">☁️ Charger</button>'
+    );
+  };
+  document.addEventListener('click',async e=>{
+    const b=e.target.closest('#ytSyncBtn,#ytLoadBtn');
+    if(!b)return;
+    if(!authState.authenticated)return toast('⚠️ Connexion Firebase requise.');
+    if(authState.role!=='Administrateur')return toast('🔒 Réservé à l’administrateur.');
+    const old=b.textContent;b.disabled=true;
+    try{
+      if(b.id==='ytLoadBtn'){
+        if(!confirm('⚠️ Charger les données depuis Firestore va remplacer les données actuellement ouvertes. Une sauvegarde locale sera conservée automatiquement. Continuer ?'))return;
+        b.textContent='⏳ Chargement…';await window.yTradeLoad();
+      }else{
+        b.textContent='⏳ Synchronisation…';await window.yTradeSync({silent:false});
+      }
+    }finally{b.disabled=false;b.textContent=old}
+  });
+
+  // ---------------- Sauvegarde/partage générique ----------------
+  document.addEventListener('click',async e=>{
+    const b=e.target.closest('[data-send-current]');
+    if(!b)return;
+    if(!authState.authenticated&&b.dataset.adminOnly)return toast('⚠️ Connexion Firebase requise.');
+    try{
+      const title=$('#ttl')?.textContent||'Y-TRADE & SERVICES SARL';
+      const blob=new Blob([htmlBackup()],{type:'text/html'});
+      const fn='Y-TRADE-'+today+'-'+hm(new Date())+'.html';
+      if(await shareTextOrFile(fn,blob,'Y-TRADE & SERVICES SARL'))return;
+      await download(fn,blob,'text/html');
+      toast('📤 Fichier HTML téléchargé.');
+    }catch(err){toast('❌ Envoi impossible.')}
+  });
+
+  // ---------------- Messagerie temps réel ----------------
+  const MSG_LIMIT=100,MSG_PATH=['companies','y-trade','messages'];
+  let msgUnsub=null,msgItems=[],msgStatus='',msgUser=null,msgProfile=null,msgBound=false;
+  const msgReadKey=uid=>'ytrade_msg_read_at_'+uid;
+  const msgReadAt=uid=>Number(localStorage.getItem(msgReadKey(uid))||0);
+  const msgNow=ms=>new Date(Number(ms)||Date.now()).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+  const msgEsc=x=>esc(String(x??''));
+  const msgUnread=()=>msgUser?msgItems.filter(m=>(+m.createdAtMs||0)>msgReadAt(msgUser.uid)).length:0;
+  const markMsgRead=()=>{
+    if(!msgUser)return;
+    try{localStorage.setItem(msgReadKey(msgUser.uid),String(Date.now()))}catch(e){}
+    updateMsgBadge();
+  };
+  const updateMsgBadge=()=>{
+    const a=document.querySelector('#nav a[data-v="msg"]');
+    if(a){const n=msgUnread();a.innerHTML='💬 Messagerie'+(n?`<span class="msg-badge">${n>99?'99+':n}</span>`:'')}
+  };
+  const msgRender=()=>{
+    const canSend=!!msgUser&&!msgProfile?.ro;
+    const rows=msgItems.map(m=>{
+      const me=m.senderUid===msgUser?.uid;
+      return `<div class="msg-item ${me?'me':''}"><div class="msg-bubble"><div class="msg-meta"><b>${msgEsc(m.senderName||'Utilisateur')}</b><span>${msgNow(m.createdAtMs)}</span></div><div class="msg-text">${msgEsc(m.text)}</div></div></div>`;
+    }).join('');
+    return `<div class="msg-shell">
+      <div class="box msg-head"><div><h2 style="margin:0">💬 Messagerie interne</h2><div class="msg-room">Canal général de Y-TRADE &amp; SERVICES SARL</div></div><span class="msg-status">${msgEsc(msgStatus||'Mise à jour en temps réel')}</span></div>
+      <div class="box"><div id="msgList" class="msg-list">${rows||'<div class="msg-empty">Aucun message pour le moment.<br>Commencez la conversation.</div>'}</div></div>
+      ${canSend?`<form class="msg-compose" data-msg-form><textarea id="msgText" maxlength="2000" placeholder="Écrire un message…" aria-label="Message"></textarea><button type="submit">📨 Envoyer</button></form>`:'<div class="box"><span class="mute">👁️ Lecture seule : vous pouvez consulter les messages, mais pas en envoyer.</span></div>'}
+    </div>`;
+  };
+
+  async function loadMsgProfile(user){
+    const f=FT();if(!f?.db)return null;
+    try{
+      const s=await f.getDoc(f.doc(f.db,'users',user.uid));
+      if(!s.exists()||s.data()?.actif===false)return null;
+      const d=s.data()||{};
+      return {uid:user.uid,email:user.email||'',name:d.nom||d.name||user.email||'Utilisateur',role:d.role||'Ventes',ro:!!d.ro};
+    }catch(e){return null}
+  }
+
+  async function bindMessaging(){
+    const f=FT();
+    if(!f?.auth||msgBound)return;
+    msgBound=true;
+    f.onAuthStateChanged(f.auth,async user=>{
+      if(msgUnsub){msgUnsub();msgUnsub=null}
+      msgItems=[];msgUser=user||null;msgProfile=null;msgStatus='';
+      updateMsgBadge();
+      if(!user){if(ui.v==='msg')render();return}
+      msgProfile=await loadMsgProfile(user);
+      if(!msgProfile){msgStatus='Profil utilisateur indisponible.';if(ui.v==='msg')render();return}
+      try{
+        const col=f.collection(f.db,...MSG_PATH);
+        const q=f.query(col,f.orderBy('createdAtMs','desc'),f.limit(MSG_LIMIT));
+        msgStatus='Connexion temps réel…';
+        msgUnsub=f.onSnapshot(q,snap=>{
+          msgItems=snap.docs.map(d=>({id:d.id,...(d.data()||{})})).sort((a,b)=>(+a.createdAtMs||0)-(+b.createdAtMs||0));
+          msgStatus=ui.v==='msg'?'':'Nouveaux messages disponibles';
+          updateMsgBadge();
+          if(ui.v==='msg'){
+            render();
+            setTimeout(()=>{$('#msgList')&&($('#msgList').scrollTop=$('#msgList').scrollHeight);markMsgRead()},0);
+          }
+        },err=>{
+          const code=err?.code||'';
+          msgStatus=code==='permission-denied'?'🔒 Accès Firestore refusé : publiez la règle messages.':
+            code==='unauthenticated'?'🔐 Session Firebase expirée.':
+            code==='unavailable'?'🌐 Firestore temporairement indisponible.':
+            '⚠️ Erreur Firestore : '+(err?.message||'');
+          updateMsgBadge();if(ui.v==='msg')render();
+        });
+      }catch(err){msgStatus='⚠️ Impossible de connecter la messagerie.'}
+    });
+  }
+
+  if(!NAV.some(g=>g[1].some(i=>i[0]==='msg'))){
+    NAV.push(['💬 Communication',[['msg','💬 Messagerie']]]);
+    TT.msg='💬 Messagerie interne';
+  }
+  V.msg=()=>{
+    setTimeout(()=>{const l=$('#msgList');if(l)l.scrollTop=l.scrollHeight;markMsgRead()},0);
+    return msgRender();
+  };
+
+  document.addEventListener('submit',async e=>{
+    const form=e.target.closest('[data-msg-form]');
+    if(!form)return;
+    e.preventDefault();
+    const f=FT(),ta=$('#msgText'),txt=(ta?.value||'').trim();
+    if(!f||!authState.authenticated||!msgUser||!msgProfile)return toast('⚠️ Connexion Firebase requise.');
+    if(msgProfile.ro)return toast('Lecture seule : envoi interdit.');
+    if(!txt)return toast('Écrivez un message.');
+    const btn=form.querySelector('button');btn.disabled=true;btn.textContent='⏳ Envoi…';
+    try{
+      await f.addDoc(f.collection(f.db,...MSG_PATH),{
+        text:txt,
+        senderUid:msgUser.uid,
+        senderName:msgProfile.name,
+        senderEmail:msgUser.email||'',
+        role:msgProfile.role||'',
+        roomId:'general',
+        createdAt:f.serverTimestamp(),
+        createdAtMs:Date.now()
+      });
+      ta.value='';markMsgRead();toast('📨 Message envoyé');
+    }catch(err){
+      const code=err?.code||'';
+      toast(code==='permission-denied'?'🔒 Envoi refusé par Firestore : vérifiez la règle messages.':code==='unauthenticated'?'🔐 Session Firebase expirée.':code==='unavailable'?'🌐 Firestore temporairement indisponible.':'❌ Envoi impossible. '+(err?.message||''));
+    }finally{btn.disabled=false;btn.textContent='📨 Envoyer';ta.focus()}
+  });
+
+  document.addEventListener('keydown',e=>{
+    if(e.target?.id==='msgText'&&e.key==='Enter'&&(e.ctrlKey||e.metaKey)){
+      e.preventDefault();
+      e.target.closest('form[data-msg-form]')?.requestSubmit();
+    }
+  });
+
+  // Patch help text that may mention the previous separate channels.
+  document.querySelectorAll('p,li,button').forEach(el=>{
+    if(el.textContent.includes('WhatsApp')||el.textContent.includes('e-mail')){
+      el.textContent=el.textContent
+        .replace(/WhatsApp\/e-mail/g,'le partage de l’appareil')
+        .replace(/WhatsApp/g,'le partage de l’appareil')
+        .replace(/e-mail/g,'le partage de l’appareil');
+    }
+  });
+
+  addHeaderFirebaseButtons();
+  addCloudButtons();
+  startAuth();
+  bindMessaging();
 })();
 </script>
+
 </body>
 </html>
