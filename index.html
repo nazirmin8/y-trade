@@ -102,7 +102,9 @@ import {
 import {
   getFirestore,
   doc,
-  getDoc
+  getDoc,
+  setDoc,
+  serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -126,7 +128,9 @@ window.yTradeFirebase = {
   signOut,
   onAuthStateChanged,
   doc,
-  getDoc
+  getDoc,
+  setDoc,
+  serverTimestamp
 };
 
 console.log("🔥 Firebase Y-TRADE connecté");
