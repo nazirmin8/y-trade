@@ -1065,13 +1065,15 @@ document.addEventListener('click',async e=>{
           password
         );
 
-      const ok=await loadFirebaseProfile(cred.user);
+const ok=await loadFirebaseProfile(cred.user);
 
-      if(!ok){
-        b.disabled=false;
-        b.textContent='🔓 Se connecter';
-        return;
-      }
+fbReady=true;
+
+if(!ok){
+  b.disabled=false;
+  b.textContent='🔓 Se connecter';
+  return;
+}
 
       try{
         sessionStorage.setItem(
