@@ -1434,6 +1434,13 @@ render=function(){
   // -------------------------------------------------------
   // Utilisateur connecté
   // -------------------------------------------------------
+  // IMPORTANT : restituer le rendu normal de l'application.
+  // rL() est le render() original sauvegardé avant le
+  // remplacement Firebase. Sans cet appel, l'ancien écran
+  // de connexion reste affiché même si Firebase a connecté
+  // l'utilisateur.
+  rL();
+
   document.querySelectorAll('#nav a').forEach(a=>{
 
     if(!localCan(a.dataset.v)){
