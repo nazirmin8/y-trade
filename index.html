@@ -89,7 +89,32 @@ button{transition:transform .1s}button:active{transform:scale(.96)}td.nx button{
 <main><header><h1 id="ttl"></h1><select id="per" aria-label="Période"><option value="month">Ce mois</option><option value="quarter">Ce trimestre</option><option value="year">Cette année</option><option value="all">Tout</option></select></header><section id="main"></section></main>
 </div>
 <div id="toast" role="status"></div>
-<script type="application/json" id="y-trade-backup">{"v":1,"savedAt":"2026-09-26T21:26:58.995Z","data":{"n":1,"products":[],"clients":[],"suppliers":[],"sales":[],"purchases":[],"expenses":[],"mv":[],"impLock":true,"staff":[],"numv":2,"entryLock":false,"mailBk":"","snaps":[],"accounts":[],"modPins":{}},"theme":{"c":2,"d":"light"}}</script>
+<script type="application/json" id="y-trade-backup">{"v":1,"savedAt":"2026-09-26T21:26:58.995Z","data":{"n":1,"products":[],"clients":[],"suppliers":[],"sales":[],"purchases":[],"expenses":[],"mv":[],"impLock":true,"staff":[],"numv":2,"entryLock":false,"mailBk":"","snaps":[],"accounts":[],"modPins":{}},"theme":{"c":2,"d":"light"}}</script><script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+  import { getAuth } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+  import { getFirestore } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAAlunHBOssaZemHJ0LzyFqqWFjUpqf-Jk",
+    authDomain: "y-trade.firebaseapp.com",
+    projectId: "y-trade",
+    storageBucket: "y-trade.firebasestorage.app",
+    messagingSenderId: "594448522138",
+    appId: "1:594448522138:web:cd3985bf190b778a193823"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+  window.yTradeFirebase = {
+    app,
+    auth,
+    db
+  };
+
+  console.log("🔥 Firebase Y-TRADE connecté");
+</script>
 <script>
 // ---- squelette d'origine (pour la sauvegarde HTML complète)
 const SRC0=(()=>{const h=[...document.head.children].filter(n=>/^(TITLE|LINK|STYLE)$/.test(n.tagName)||(n.tagName=='META'&&!n.httpEquiv)).map(n=>n.outerHTML).join('\n');return{lang:document.documentElement.lang||'fr',head:h,body:['.app','#toast'].map(q=>document.querySelector(q).outerHTML).join('\n')}})();
