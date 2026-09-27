@@ -146,7 +146,79 @@ const daysAgo=n=>addDays(today,-n),by=(a,i)=>a.find(x=>x.id==i)||{};
 const MODES=['Espèces','Banque','Mobile Money'],CH=['Loyer','Salaires','Transport','Électricité et eau','Communication','Autres'];
 let S,ui={v:'dash',p:'month',mode:'simple',arm:''};
 function fresh(){return{n:1,products:[],clients:[],suppliers:[],sales:[],purchases:[],expenses:[],mv:[]}}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}// =========================================================
+// ☁️ SYNCHRONISATION FIRESTORE — V2
+// =========================================================
+const FIRESTORE_COMPANY='y-trade';
+
+async function syncToFirestore(){
+
+  const f=FB();
+
+  if(!f || !f.db || !fbUser || !fbProfile){
+    toast('⚠️ Connexion Firebase requise.');
+    return false;
+  }
+
+  if(fbProfile.actif===false){
+    toast('⚠️ Compte désactivé.');
+    return false;
+  }
+
+  if(fbProfile.role!=='Administrateur'){
+    toast('🔒 Synchronisation réservée à l’administrateur.');
+    return false;
+  }
+
+  try{
+
+    const data=JSON.parse(JSON.stringify(S));
+    const json=JSON.stringify(data);
+    const size=new Blob([json]).size;
+
+    if(size>900000){
+      toast('⚠️ Données trop volumineuses pour cette première synchronisation.');
+      console.warn('Taille Firestore:',size,'octets');
+      return false;
+    }
+
+    const ref=f.doc(
+      f.db,
+      'companies',
+      FIRESTORE_COMPANY,
+      'state',
+      'main'
+    );
+
+    await f.setDoc(ref,{
+      data,
+      updatedAt:f.serverTimestamp(),
+      updatedBy:fbUser.uid,
+      updatedByEmail:fbUser.email||'',
+      version:1
+    });
+
+    toast('☁️ Données synchronisées avec Firestore');
+
+    console.log('☁️ Y-TRADE synchronisé avec Firestore',{
+      size,
+      user:fbUser.uid
+    });
+
+    return true;
+
+  }catch(err){
+
+    console.error('Erreur synchronisation Firestore:',err);
+
+    toast(
+      '❌ Synchronisation impossible. '+
+      (err&&err.message?err.message:'')
+    );
+
+    return false;
+  }
+}
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(toast.h);toast.h=setTimeout(()=>t.classList.remove('on'),2400)}
 const id=()=>S.n++;
 const stock=p=>(p.open||0)+S.purchases.filter(x=>x.productId==p.id).reduce((t,x)=>t+x.qty,0)-S.sales.filter(x=>x.productId==p.id).reduce((t,x)=>t+x.qty,0);
