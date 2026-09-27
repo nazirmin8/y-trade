@@ -1466,7 +1466,9 @@ render=function(){
   // -------------------------------------------------------
   // Utilisateur connecté
   // -------------------------------------------------------
-  document.querySelectorAll('#nav a').forEach(a=>{
+  document.querySelectorAll('#nav a').
+   rL();
+forEach(a=>{
 
     if(!localCan(a.dataset.v)){
       a.remove();
