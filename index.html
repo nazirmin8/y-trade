@@ -711,89 +711,885 @@ if(b.dataset.mpn){const id=b.dataset.mpn,ip=$('#mpn-'+id),v=ip?ip.value:'';if(!v
 else{const id=b.dataset.mprm;delete mp()[id];unl.add(id);save();toast('Mot de passe retiré')}
 render()});
 })();
-// ---- page de connexion avec comptes locaux et niveaux d'accès ----
+// ---- authentification Firebase : comptes, rôles et niveaux d'accès ----
 (()=>{
-const ACC=()=>S.accounts||(S.accounts=[]);
+const FB=()=>window.yTradeFirebase||null;
+
+let sess=null;
+let fbReady=false;
+let fbUser=null;
+let fbProfile=null;
+let fbGuest=false;
+
 const ROLES=['Administrateur','Ventes','Achats','Comptabilité'];
-let sess=null;try{sess=sessionStorage.getItem('yt_sess')||null}catch(e){}
-const loginOn=()=>ACC().length>0;
-const curAcc=()=>ACC().find(a=>a.id==sess);
-const localAdm=()=>!loginOn()||(curAcc()&&curAcc().role=='Administrateur');
-const MASKL={cost:'🙈 Coûts, prix d’achat & marges',sal:'🙈 Salaires & trésorerie',pin:'🙈 Comptes & mots de passe'};
-const maskDeny=a=>{const s=new Set(),mk=new Set(a.mask||[]);if(mk.has('cost')){s.add('pnl');s.add('rent');s.add('scenario');s.add('dir')}if(mk.has('sal')){s.add('staff');s.add('tre');s.add('pnl');s.add('rent');s.add('dir')}if(mk.has('pin'))s.add('bak');return s};
-const localCan=v=>{if(v=='aide')return true;if(!loginOn())return true;const a=curAcc();if(!a)return false;if(a.role=='Administrateur')return true;if(maskDeny(a).has(v))return false;const bs=new Set((RM[a.role]||'').split(' ').filter(Boolean));(a.extra||[]).forEach(x=>bs.add(x));(a.deny||[]).forEach(x=>bs.delete(x));return bs.has(v)};
-const localCanEnter=v=>{if(!loginOn())return true;const a=curAcc();if(!a)return false;if(a.role=='Administrateur')return true;if(a.ro)return false;return !((a.noEntry||[]).includes(v))};
-const ROLE_IC={Administrateur:'🔐',Ventes:'🛒',Achats:'📦','Comptabilité':'🧮'};
-const DEFV={Administrateur:'dash',Ventes:'sales',Achats:'purchases','Comptabilité':'tre'};
-function loginPanel(){const accs=ACC(),sel=accs.find(a=>a.id==ui.lgSel)?ui.lgSel:(accs[0]&&accs[0].id);
-return `<div class="login-wrap"><div class="login-card"><div class="login-brand">🏬</div><h1 class="login-title">Y-TRADE &amp; SERVICES SARL</h1><p class="login-sub">Sélectionnez votre accès pour ouvrir l’application.</p>
-<span class="login-lbl">Accès</span><div class="login-accs">${accs.map(a=>`<label class="login-acc"><input type="radio" name="lgacc" value="${a.id}"${a.id==sel?' checked':''}><span class="login-acc-ic">${ROLE_IC[a.role]||'👤'}</span><span class="login-acc-txt"><span class="login-acc-name">${esc(a.name)}</span><span class="login-acc-role">${esc(a.role)}</span></span></label>`).join('')}</div>
-<span class="login-lbl">Mot de passe</span><input id="lgP" type="password" placeholder="Mot de passe" autofocus>
-<button data-lg="in" class="login-btn">🔓 Se connecter</button>
-<button data-guest="1" class="ghost login-guest">👁️ Accès visiteur (lecture seule, sans mot de passe)</button>
-<p class="login-foot">L’application s’ouvre directement sur le module correspondant à l’accès choisi. L’accès visiteur donne une vue en lecture seule du tableau de bord, sans possibilité de modification.</p>
-</div></div>`}
-document.addEventListener('change',e=>{if(e.target&&e.target.name=='lgacc')ui.lgSel=e.target.value});
-document.addEventListener('click',e=>{const b=e.target.closest('[data-lg]');if(!b)return;
-if(b.dataset.lg=='in'){const r=document.querySelector('input[name="lgacc"]:checked'),p=$('#lgP'),a=ACC().find(x=>x.id==(r?r.value:''));if(!a)return toast('Compte introuvable.');if(hs(p?p.value:'')!=a.pin)return toast('Mot de passe incorrect.');sess=a.id;try{sessionStorage.setItem('yt_sess',sess)}catch(e){}ui.v=DEFV[a.role]||'dash';ui.arm='';toast('✅ Bienvenue, '+a.name);render()}
-else if(b.dataset.lg=='out'){sess=null;try{sessionStorage.removeItem('yt_sess')}catch(e){}ui.v='dash';toast('👋 Déconnecté');render()}});
-document.addEventListener('keydown',e=>{if(e.key=='Enter'&&e.target.id=='lgP')document.querySelector('[data-lg="in"]').click()});
-$('header span').insertAdjacentHTML('beforeend','<button class="ghost" id="lgout" data-lg="out" style="display:none" title="Se déconnecter">🚪 Déconnexion</button>');
-const ALLMOD=()=>{const s=[];NAV.forEach(g=>g[1].forEach(([k,l])=>{if(k!='aide'&&k!='acc')s.push([k,l])}));return s};
-const effMod=a=>{const bs=new Set((RM[a.role]||'').split(' ').filter(Boolean));(a.extra||[]).forEach(x=>bs.add(x));(a.deny||[]).forEach(x=>bs.delete(x));return bs};
-function accPanel(){const accs=ACC(),rows=accs.map(a=>{const cust=a.role!='Administrateur'?(()=>{const open=ui.pac==a.id,e=effMod(a),ne=new Set(a.noEntry||[]),mk=new Set(a.mask||[]);return `<button class="ghost" data-acx="${a.id}">${open?'▲':'🔧'} Personnaliser les accès</button>`+(open?`<div class="box" style="margin:8px 0 4px;background:var(--bg)"><p class="mute" style="margin:0 0 8px">Cochez les modules accessibles à ce compte : au-delà de ce qui est coché par défaut pour étendre l’accès, ou décochez pour le restreindre — au-delà de ce que donne le rôle « ${esc(a.role)} ».</p><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:6px">${ALLMOD().map(([k,l])=>`<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-acm="${esc(k)}"${e.has(k)?' checked':''} style="width:auto">${esc(l)}</label>`).join('')}</div>
-<p class="mute" style="margin:14px 0 8px"><b>Saisie</b> — restreindre l’ajout, la modification et la suppression de données pour ce compte.</p>
-<label style="display:flex;gap:6px;align-items:center;margin-bottom:8px"><input type="checkbox" data-acro="1"${a.ro?' checked':''} style="width:auto"><b>Compte en lecture seule</b> — consultation uniquement, aucune saisie possible sur aucun module</label>
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:6px">${[...e].map(k=>{const l=(ALLMOD().find(x=>x[0]==k)||[0,k])[1];return `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-acne="${esc(k)}"${ne.has(k)?'':' checked'} style="width:auto">${esc(l)} — saisie autorisée</label>`}).join('')}</div>
-<p class="mute" style="margin:14px 0 8px"><b>Éléments sensibles</b> — masquer pour ce compte (modules et colonnes correspondants retirés de l’affichage), quels que soient les accès ci-dessus.</p>
-<div style="display:grid;gap:6px">${Object.entries(MASKL).map(([k,l])=>`<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-acmk="${k}"${mk.has(k)?' checked':''} style="width:auto">${l}</label>`).join('')}</div>
-<div class="tools" style="margin-top:8px"><button data-acps="${a.id}">Enregistrer les accès</button></div></div>`:'')})():'';
-return `<div style="padding:4px 0;border-bottom:1px solid var(--line)"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="min-width:140px">${esc(a.name)}${a.id==sess?' (vous)':''}</span><select data-acr="${a.id}">${ROLES.map(r=>`<option${r==a.role?' selected':''}>${r}</option>`).join('')}</select><input type="password" data-acnp="${a.id}" placeholder="Nouveau mot de passe (optionnel)" style="max-width:190px"><button class="ghost" data-acs="${a.id}">Enregistrer</button><button class="ghost" data-acrm="${a.id}">🗑️ Retirer</button></div>${cust}</div>`}).join('');
-return `<div class="box" style="margin-bottom:12px"><h2>👤 Comptes &amp; accès</h2><p class="mute">${accs.length?'La connexion est activée : un identifiant et un mot de passe sont requis pour ouvrir l’application, avec un accès limité selon le rôle (Ventes, Achats, Comptabilité) ou complet (Administrateur). Pour un compte non-administrateur, ses accès peuvent en plus être étendus ou restreints individuellement via « 🔧 Personnaliser les accès » : quels modules sont visibles, si la saisie (ajout/modification/suppression) y est autorisée — globalement ou module par module —, et si certains éléments sensibles (coûts et marges, salaires et trésorerie, comptes et mots de passe) doivent lui rester masqués.':'Aucun compte défini : l’application reste ouverte sans connexion. Ajoutez un premier compte pour activer la page de connexion.'}</p>${rows}<div class="tools" style="margin-top:8px"><input id="acn" type="text" placeholder="Nom"><input id="acp" type="password" placeholder="Mot de passe"><select id="acro">${ROLES.map(r=>`<option>${r}</option>`).join('')}</select><button data-acadd="1">➕ Ajouter le compte</button></div></div>`}
-const bkA0=V.bak;V.bak=()=>accPanel()+bkA0();
-document.addEventListener('click',e=>{const b=e.target.closest('[data-acadd],[data-acs],[data-acrm],[data-acx],[data-acps]');if(!b)return;if(!localAdm())return toast('Réservé à l’administrateur.');
-if(b.dataset.acadd){const n=$('#acn'),p=$('#acp'),r=$('#acro'),nm=n?n.value.trim():'',pw=p?p.value:'',rl=r?r.value:ROLES[0];if(!nm)return toast('Entrez un nom.');if(!pw)return toast('Entrez un mot de passe.');ACC().push({id:id(),name:nm,role:rl,pin:hs(pw)});save();toast('✅ Compte créé');render()}
-else if(b.dataset.acs){const aid=b.dataset.acs,sel=document.querySelector('select[data-acr="'+aid+'"]'),npw=document.querySelector('input[data-acnp="'+aid+'"]'),a=ACC().find(x=>x.id==aid);if(!a||!sel)return;
-if(a.role=='Administrateur'&&sel.value!='Administrateur'&&ACC().filter(x=>x.role=='Administrateur').length<=1)return toast('Impossible : au moins un compte Administrateur doit exister.');
-if(a.role!=sel.value){a.extra=[];a.deny=[]}
-a.role=sel.value;if(npw&&npw.value)a.pin=hs(npw.value);save();toast('✅ Compte mis à jour');render()}
-else if(b.dataset.acrm){const aid=b.dataset.acrm,a=ACC().find(x=>x.id==aid);if(!a)return;
-if(a.role=='Administrateur'&&ACC().filter(x=>x.role=='Administrateur').length<=1)return toast('Impossible : au moins un compte Administrateur doit exister.');
-if(ui.arm!='acrm'+aid){ui.arm='acrm'+aid;b.textContent='Confirmer ?';return}
-ui.arm='';S.accounts=ACC().filter(x=>x.id!=aid);if(sess==aid){sess=null;try{sessionStorage.removeItem('yt_sess')}catch(e){}}save();toast('Compte retiré');render()}
-else if(b.dataset.acx){ui.pac=ui.pac==b.dataset.acx?null:b.dataset.acx;render()}
-else if(b.dataset.acps){const aid=b.dataset.acps,a=ACC().find(x=>x.id==aid);if(!a)return;
-const base=new Set((RM[a.role]||'').split(' ').filter(Boolean)),chosen=new Set([...document.querySelectorAll('input[data-acm]')].filter(c=>c.checked).map(c=>c.dataset.acm));
-a.extra=[...chosen].filter(k=>!base.has(k));a.deny=[...base].filter(k=>!chosen.has(k));
-const roEl=document.querySelector('input[data-acro]');a.ro=!!(roEl&&roEl.checked);
-a.noEntry=[...document.querySelectorAll('input[data-acne]')].filter(c=>!c.checked).map(c=>c.dataset.acne);
-a.mask=[...document.querySelectorAll('input[data-acmk]')].filter(c=>c.checked).map(c=>c.dataset.acmk);
-save();toast('✅ Accès mis à jour');render()}});
-const rL=render;render=function(){rL();
-if(loginOn()&&!curAcc()){$('#main').innerHTML=loginPanel();$('#nav').style.opacity='.35';$('#nav').style.pointerEvents='none';$('#rb').textContent='';$('#lgout').style.display='none';$('#ttl').textContent='';$('#per').style.display='none';return}
-if(loginOn()&&curAcc()){document.querySelectorAll('#nav a').forEach(a=>{if(!localCan(a.dataset.v))a.remove()});document.querySelectorAll('#nav h3').forEach(h=>{if(!h.nextElementSibling||h.nextElementSibling.tagName!='A')h.remove()});
-$('#rb').textContent='👤 '+curAcc().name+' · '+curAcc().role;$('#lgout').style.display='';
-if(!localCan(ui.v)){ui.v='dash';return render()}
-const a=curAcc();
-if(a.role!='Administrateur'){
-const mk=new Set(a.mask||[]);
-if(mk.size){
-const maskCols=hs=>{document.querySelectorAll('#main table').forEach(t=>{const ths=[...t.querySelectorAll('th')],idx=[];ths.forEach((th,i)=>{if(hs.some(h=>th.textContent.trim().toLowerCase()==h.toLowerCase()))idx.push(i)});if(!idx.length)return;t.querySelectorAll('tbody tr').forEach(tr=>idx.forEach(i=>{const td=tr.children[i];if(td)td.innerHTML='<span class="mute">•••</span>'}))})};
-const maskTiles=ls=>document.querySelectorAll('#main .k').forEach(k=>{const sp=k.querySelector('span');if(sp&&ls.includes(sp.textContent.trim())){const b=k.querySelector('b');if(b)b.textContent='•••';const i=k.querySelector('i');if(i)i.remove()}});
-if(mk.has('cost')){maskCols(['Prix d’achat','Marge','Valeur','Valeur de l’écart']);maskTiles(['Marge brute','Taux de marge','Valeur du stock'])}
-if(mk.has('sal'))maskTiles(['Trésorerie']);
+
+const ROLE_IC={
+  Administrateur:'🔐',
+  Ventes:'🛒',
+  Achats:'📦',
+  'Comptabilité':'🧮'
+};
+
+const DEFV={
+  Administrateur:'dash',
+  Ventes:'sales',
+  Achats:'purchases',
+  'Comptabilité':'tre'
+};
+
+const MASKL={
+  cost:'🙈 Coûts, prix d’achat & marges',
+  sal:'🙈 Salaires & trésorerie',
+  pin:'🙈 Comptes & mots de passe'
+};
+
+const maskDeny=a=>{
+  const s=new Set();
+  const mk=new Set((a&&a.mask)||[]);
+
+  if(mk.has('cost')){
+    s.add('pnl');
+    s.add('rent');
+    s.add('scenario');
+    s.add('dir');
+  }
+
+  if(mk.has('sal')){
+    s.add('staff');
+    s.add('tre');
+    s.add('pnl');
+    s.add('rent');
+    s.add('dir');
+  }
+
+  if(mk.has('pin')) s.add('bak');
+
+  return s;
+};
+
+const curAcc=()=>fbProfile;
+
+const loginOn=()=>!!fbReady;
+
+const localAdm=()=>{
+  const a=curAcc();
+  return !!a && a.role=='Administrateur';
+};
+
+const localCan=v=>{
+  if(v=='aide') return true;
+
+  const a=curAcc();
+
+  if(!a) return false;
+
+  if(a.role=='Administrateur') return true;
+
+  if(maskDeny(a).has(v)) return false;
+
+  const bs=new Set(
+    (RM[a.role]||'')
+      .split(' ')
+      .filter(Boolean)
+  );
+
+  (a.extra||[]).forEach(x=>bs.add(x));
+  (a.deny||[]).forEach(x=>bs.delete(x));
+
+  return bs.has(v);
+};
+
+const localCanEnter=v=>{
+  const a=curAcc();
+
+  if(!a) return false;
+
+  if(a.role=='Administrateur') return true;
+
+  if(a.ro) return false;
+
+  return !((a.noEntry||[]).includes(v));
+};
+
+// ---------------------------------------------------------
+// Chargement du profil utilisateur depuis Firestore
+// ---------------------------------------------------------
+async function loadFirebaseProfile(user){
+
+  if(!user){
+    fbUser=null;
+    fbProfile=null;
+    return false;
+  }
+
+  const f=FB();
+
+  if(!f || !f.db || !f.doc || !f.getDoc){
+    toast('⚠️ Firebase Firestore n’est pas disponible.');
+    return false;
+  }
+
+  try{
+
+    const ref=f.doc(f.db,'users',user.uid);
+    const snap=await f.getDoc(ref);
+
+    if(!snap.exists()){
+      toast('⚠️ Aucun profil Firestore associé à ce compte.');
+      await f.signOut(f.auth);
+      return false;
+    }
+
+    const data=snap.data()||{};
+
+    if(data.actif===false){
+      toast('⛔ Ce compte est désactivé.');
+      await f.signOut(f.auth);
+      return false;
+    }
+
+    fbUser=user;
+
+    fbProfile={
+      id:user.uid,
+      uid:user.uid,
+      email:user.email||'',
+      name:data.nom||data.name||user.email||'Utilisateur',
+      role:data.role||'Ventes',
+      actif:data.actif!==false,
+
+      // Permissions personnalisées conservées
+      extra:Array.isArray(data.extra)?data.extra:[],
+      deny:Array.isArray(data.deny)?data.deny:[],
+      ro:!!data.ro,
+      noEntry:Array.isArray(data.noEntry)?data.noEntry:[],
+      mask:Array.isArray(data.mask)?data.mask:[]
+    };
+
+    return true;
+
+  }catch(err){
+
+    console.error('Erreur chargement profil Firebase:',err);
+
+    toast(
+      '⚠️ Impossible de charger votre profil. '+
+      (err&&err.message?err.message:'')
+    );
+
+    return false;
+  }
 }
+
+// ---------------------------------------------------------
+// Initialisation de Firebase
+// ---------------------------------------------------------
+function initFirebaseAuth(){
+
+  const start=()=>{
+
+    const f=FB();
+
+    if(!f || !f.auth || !f.onAuthStateChanged){
+
+      // Le script Firebase peut encore être en cours de chargement
+      setTimeout(start,100);
+
+      return;
+    }
+
+    f.onAuthStateChanged(async user=>{
+
+      fbReady=false;
+
+      if(user){
+
+        const ok=await loadFirebaseProfile(user);
+
+        if(ok){
+
+          fbReady=true;
+
+          try{
+            sessionStorage.setItem('yt_sess',user.uid);
+          }catch(e){}
+
+          ui.v=DEFV[fbProfile.role]||'dash';
+          ui.arm='';
+
+        }else{
+
+          fbReady=true;
+        }
+
+      }else{
+
+        fbUser=null;
+        fbProfile=null;
+        fbReady=true;
+
+        try{
+          sessionStorage.removeItem('yt_sess');
+        }catch(e){}
+      }
+
+      render();
+    });
+  };
+
+  start();
 }
-if(!localCanEnter(ui.v)){
-document.querySelectorAll('#main form[data-f]').forEach(f=>f.remove());
-document.querySelectorAll('#main [data-x],#main [data-mx],#main [data-sd],#main [data-del],#main [data-ed],#main [data-sp],#main [data-spall],#main [data-scd],#main [data-pogsave],#main [data-bgm]').forEach(el=>el.remove());
-document.querySelectorAll('#main [data-act="pay"]').forEach(b=>{const w=b.closest('span')||b;w.remove()});
-document.querySelectorAll('#main input[data-pog]').forEach(inp=>inp.disabled=true);
-const bk=$('#bk');if(bk)bk.readOnly=true;
-if(!$('#main .ro-note'))$('#main').insertAdjacentHTML('afterbegin','<div class="box ro-note" style="margin-bottom:12px;border-left:5px solid var(--mute)"><p class="mute" style="margin:0">👁️ Accès en lecture seule pour ce module : consultation uniquement, aucune saisie.</p></div>');
+
+// ---------------------------------------------------------
+// Écran de connexion Firebase
+// ---------------------------------------------------------
+function loginPanel(){
+
+  if(!FB()){
+
+    return `
+    <div class="login-wrap">
+      <div class="login-card">
+        <div class="login-brand">🏬</div>
+        <h1 class="login-title">Y-TRADE &amp; SERVICES SARL</h1>
+        <p class="login-sub">
+          Connexion sécurisée en cours de chargement...
+        </p>
+      </div>
+    </div>`;
+  }
+
+  return `
+  <div class="login-wrap">
+    <div class="login-card">
+
+      <div class="login-brand">🏬</div>
+
+      <h1 class="login-title">
+        Y-TRADE &amp; SERVICES SARL
+      </h1>
+
+      <p class="login-sub">
+        Connectez-vous pour accéder à l’application.
+      </p>
+
+      <span class="login-lbl">
+        Adresse e-mail
+      </span>
+
+      <input
+        id="fbEmail"
+        type="email"
+        placeholder="Adresse e-mail"
+        autocomplete="username"
+        autofocus
+      >
+
+      <span class="login-lbl">
+        Mot de passe
+      </span>
+
+      <input
+        id="fbPassword"
+        type="password"
+        placeholder="Mot de passe"
+        autocomplete="current-password"
+      >
+
+      <button
+        data-fb-login="1"
+        class="login-btn"
+      >
+        🔓 Se connecter
+      </button>
+
+      <button
+        data-guest="1"
+        class="ghost login-guest"
+      >
+        👁️ Accès visiteur
+        (lecture seule, sans mot de passe)
+      </button>
+
+      <p class="login-foot">
+        L’accès est sécurisé par Firebase Authentication.
+        Vos droits sont déterminés par votre profil utilisateur
+        enregistré dans Firestore.
+      </p>
+
+    </div>
+  </div>`;
 }
+
+// ---------------------------------------------------------
+// Connexion / déconnexion Firebase
+// ---------------------------------------------------------
+document.addEventListener('click',async e=>{
+
+  const b=e.target.closest('[data-fb-login],[data-fb-logout]');
+
+  if(!b) return;
+
+  const f=FB();
+
+  if(!f) {
+    return toast('⚠️ Firebase n’est pas encore disponible.');
+  }
+
+  // ---------------- CONNEXION ----------------
+  if(b.dataset.fbLogin){
+
+    const emailEl=$('#fbEmail');
+    const passEl=$('#fbPassword');
+
+    const email=emailEl?emailEl.value.trim():'';
+    const password=passEl?passEl.value:'';
+
+    if(!email){
+      return toast('Entrez votre adresse e-mail.');
+    }
+
+    if(!password){
+      return toast('Entrez votre mot de passe.');
+    }
+
+    b.disabled=true;
+    b.textContent='⏳ Connexion...';
+
+    try{
+
+      const cred=
+        await f.signInWithEmailAndPassword(
+          f.auth,
+          email,
+          password
+        );
+
+      const ok=await loadFirebaseProfile(cred.user);
+
+      if(!ok){
+        b.disabled=false;
+        b.textContent='🔓 Se connecter';
+        return;
+      }
+
+      try{
+        sessionStorage.setItem(
+          'yt_sess',
+          cred.user.uid
+        );
+      }catch(e){}
+
+      ui.v=DEFV[fbProfile.role]||'dash';
+      ui.arm='';
+
+      toast(
+        '✅ Bienvenue, '+
+        (fbProfile.name||cred.user.email)
+      );
+
+      render();
+
+    }catch(err){
+
+      console.error('Erreur connexion Firebase:',err);
+
+      let msg='Connexion impossible.';
+
+      if(err.code=='auth/invalid-credential'){
+        msg='E-mail ou mot de passe incorrect.';
+      }
+      else if(err.code=='auth/invalid-email'){
+        msg='Adresse e-mail invalide.';
+      }
+      else if(err.code=='auth/user-disabled'){
+        msg='Ce compte Firebase est désactivé.';
+      }
+      else if(err.code=='auth/too-many-requests'){
+        msg='Trop de tentatives. Réessayez plus tard.';
+      }
+
+      toast('❌ '+msg);
+
+      b.disabled=false;
+      b.textContent='🔓 Se connecter';
+    }
+  }
+
+  // ---------------- DÉCONNEXION ----------------
+  else if(b.dataset.fbLogout){
+
+    try{
+
+      await f.signOut(f.auth);
+
+      fbUser=null;
+      fbProfile=null;
+
+      try{
+        sessionStorage.removeItem('yt_sess');
+      }catch(e){}
+
+      ui.v='dash';
+      ui.arm='';
+
+      toast('👋 Déconnexion réussie');
+
+      render();
+
+    }catch(err){
+
+      console.error('Erreur déconnexion:',err);
+
+      toast('⚠️ Impossible de se déconnecter.');
+    }
+  }
+});
+
+// Connexion avec la touche Entrée
+document.addEventListener('keydown',e=>{
+
+  if(
+    e.key=='Enter' &&
+    (
+      e.target.id=='fbEmail' ||
+      e.target.id=='fbPassword'
+    )
+  ){
+
+    const b=document.querySelector(
+      '[data-fb-login="1"]'
+    );
+
+    if(b) b.click();
+  }
+});
+
+// ---------------------------------------------------------
+// Bouton Déconnexion dans l'en-tête
+// ---------------------------------------------------------
+$('header span').insertAdjacentHTML(
+  'beforeend',
+  '<button class="ghost" id="lgout" data-fb-logout="1" style="display:none" title="Se déconnecter">🚪 Déconnexion</button>'
+);
+
+// ---------------------------------------------------------
+// Modules / permissions
+// ---------------------------------------------------------
+const ALLMOD=()=>{
+  const s=[];
+
+  NAV.forEach(g=>
+    g[1].forEach(([k,l])=>{
+      if(k!='aide'&&k!='acc'){
+        s.push([k,l]);
+      }
+    })
+  );
+
+  return s;
+};
+
+const effMod=a=>{
+
+  const bs=new Set(
+    (RM[a.role]||'')
+      .split(' ')
+      .filter(Boolean)
+  );
+
+  (a.extra||[]).forEach(x=>bs.add(x));
+  (a.deny||[]).forEach(x=>bs.delete(x));
+
+  return bs;
+};
+
+// ---------------------------------------------------------
+// Panneau comptes & accès
+// ---------------------------------------------------------
+// Les comptes Firebase sont désormais administrés dans
+// Firebase Authentication + Firestore.
+// Cette section permet uniquement de consulter le profil
+// et ses permissions depuis l'application.
+function accPanel(){
+
+  const a=curAcc();
+
+  if(!a) return '';
+
+  const mods=[...effMod(a)];
+
+  const modRows=mods.map(k=>{
+
+    const item=
+      ALLMOD().find(x=>x[0]==k);
+
+    return `
+      <span class="tag">
+        ${esc(item?item[1]:k)}
+      </span>
+    `;
+
+  }).join('');
+
+  return `
+  <div class="box" style="margin-bottom:12px">
+
+    <h2>👤 Compte &amp; accès</h2>
+
+    <p class="mute">
+      Votre compte est géré par Firebase Authentication.
+      Les droits d'accès sont chargés depuis votre profil
+      Firestore.
+    </p>
+
+    <div class="kg">
+
+      ${K(
+        'Utilisateur',
+        esc(a.name||'Utilisateur')
+      )}
+
+      ${K(
+        'E-mail',
+        esc(a.email||'')
+      )}
+
+      ${K(
+        'Rôle',
+        (ROLE_IC[a.role]||'👤')+
+        ' '+
+        esc(a.role||'')
+      )}
+
+      ${K(
+        'Statut',
+        a.actif===false
+          ? '⛔ Désactivé'
+          : '✅ Actif'
+      )}
+
+    </div>
+
+    <h3 style="margin-top:15px">
+      🔐 Modules accessibles
+    </h3>
+
+    <div style="
+      display:flex;
+      gap:6px;
+      flex-wrap:wrap;
+      margin-top:8px;
+    ">
+      ${modRows||'<span class="mute">Aucun module défini.</span>'}
+    </div>
+
+    ${
+      a.role!='Administrateur'
+      ?
+      `
+      <p class="mute" style="margin-top:15px">
+        Les droits supplémentaires, restrictions,
+        accès en lecture seule et éléments sensibles
+        sont définis dans le profil Firestore.
+      </p>
+      `
+      :
+      `
+      <p class="mute" style="margin-top:15px">
+        🔐 Administrateur : accès complet à l'application.
+      </p>
+      `
+    }
+
+  </div>`;
 }
-else{$('#lgout').style.display='none'}};
+
+// Ajout du panneau au module Données / sauvegardes
+const bkA0=V.bak;
+V.bak=()=>accPanel()+bkA0();
+
+// ---------------------------------------------------------
+// Remplacement du système local de connexion
+// ---------------------------------------------------------
+const rL=render;
+
+render=function(){
+
+  // -------------------------------------------------------
+  // Firebase pas encore initialisé
+  // -------------------------------------------------------
+  if(!fbReady){
+
+    const main=$('#main');
+
+    if(main){
+
+      main.innerHTML=`
+      <div class="login-wrap">
+        <div class="login-card">
+          <div class="login-brand">🏬</div>
+
+          <h1 class="login-title">
+            Y-TRADE &amp; SERVICES SARL
+          </h1>
+
+          <p class="login-sub">
+            🔥 Connexion sécurisée en cours...
+          </p>
+        </div>
+      </div>`;
+    }
+
+    return;
+  }
+
+  // -------------------------------------------------------
+  // Aucun utilisateur connecté
+  // -------------------------------------------------------
+  if(!fbUser || !fbProfile){
+
+    $('#main').innerHTML=loginPanel();
+
+    $('#nav').style.opacity='.35';
+    $('#nav').style.pointerEvents='none';
+
+    $('#rb').textContent='';
+
+    const lo=$('#lgout');
+    if(lo) lo.style.display='none';
+
+    $('#ttl').textContent='';
+    $('#per').style.display='none';
+
+    return;
+  }
+
+  // -------------------------------------------------------
+  // Utilisateur connecté
+  // -------------------------------------------------------
+  document.querySelectorAll('#nav a').forEach(a=>{
+
+    if(!localCan(a.dataset.v)){
+      a.remove();
+    }
+
+  });
+
+  document.querySelectorAll('#nav h3').forEach(h=>{
+
+    if(
+      !h.nextElementSibling ||
+      h.nextElementSibling.tagName!='A'
+    ){
+      h.remove();
+    }
+
+  });
+
+  $('#nav').style.opacity='';
+  $('#nav').style.pointerEvents='';
+
+  $('#rb').textContent=
+    '👤 '+
+    (fbProfile.name||fbProfile.email)+
+    ' · '+
+    fbProfile.role;
+
+  const lo=$('#lgout');
+
+  if(lo) lo.style.display='';
+
+  // -------------------------------------------------------
+  // Vérification du module demandé
+  // -------------------------------------------------------
+  if(!localCan(ui.v)){
+
+    ui.v='dash';
+
+    return render();
+  }
+
+  const a=curAcc();
+
+  // -------------------------------------------------------
+  // Masquage des données sensibles
+  // -------------------------------------------------------
+  if(a && a.role!='Administrateur'){
+
+    const mk=new Set(a.mask||[]);
+
+    if(mk.size){
+
+      const maskCols=hs=>{
+
+        document
+          .querySelectorAll('#main table')
+          .forEach(t=>{
+
+            const ths=[
+              ...t.querySelectorAll('th')
+            ];
+
+            const idx=[];
+
+            ths.forEach((th,i)=>{
+
+              if(
+                hs.some(
+                  h=>
+                    th.textContent
+                      .trim()
+                      .toLowerCase()
+                    ==
+                    h.toLowerCase()
+                )
+              ){
+                idx.push(i);
+              }
+
+            });
+
+            if(!idx.length) return;
+
+            t.querySelectorAll('tbody tr')
+              .forEach(tr=>{
+
+                idx.forEach(i=>{
+
+                  const td=tr.children[i];
+
+                  if(td){
+                    td.innerHTML=
+                      '<span class="mute">•••</span>';
+                  }
+
+                });
+
+              });
+
+          });
+      };
+
+      const maskTiles=ls=>{
+
+        document
+          .querySelectorAll('#main .k')
+          .forEach(k=>{
+
+            const sp=k.querySelector('span');
+
+            if(
+              sp &&
+              ls.includes(sp.textContent.trim())
+            ){
+
+              const b=k.querySelector('b');
+              if(b) b.textContent='•••';
+
+              const i=k.querySelector('i');
+              if(i) i.remove();
+            }
+
+          });
+      };
+
+      if(mk.has('cost')){
+
+        maskCols([
+          'Prix d’achat',
+          'Marge',
+          'Valeur',
+          'Valeur de l’écart'
+        ]);
+
+        maskTiles([
+          'Marge brute',
+          'Taux de marge',
+          'Valeur du stock'
+        ]);
+      }
+
+      if(mk.has('sal')){
+
+        maskTiles([
+          'Trésorerie'
+        ]);
+      }
+
+    }
+  }
+
+  // -------------------------------------------------------
+  // Lecture seule / interdiction de saisie
+  // -------------------------------------------------------
+  if(!localCanEnter(ui.v)){
+
+    document
+      .querySelectorAll('#main form[data-f]')
+      .forEach(f=>f.remove());
+
+    document
+      .querySelectorAll(
+        '#main [data-x],' +
+        '#main [data-mx],' +
+        '#main [data-sd],' +
+        '#main [data-del],' +
+        '#main [data-ed],' +
+        '#main [data-sp],' +
+        '#main [data-spall],' +
+        '#main [data-scd],' +
+        '#main [data-pogsave],' +
+        '#main [data-bgm]'
+      )
+      .forEach(el=>el.remove());
+
+    document
+      .querySelectorAll(
+        '#main [data-act="pay"]'
+      )
+      .forEach(b=>{
+
+        const w=
+          b.closest('span')||b;
+
+        w.remove();
+      });
+
+    document
+      .querySelectorAll(
+        '#main input[data-pog]'
+      )
+      .forEach(inp=>{
+        inp.disabled=true;
+      });
+
+    const bk=$('#bk');
+
+    if(bk) bk.readOnly=true;
+
+    if(!$('#main .ro-note')){
+
+      $('#main').insertAdjacentHTML(
+        'afterbegin',
+
+        '<div class="box ro-note" style="margin-bottom:12px;border-left:5px solid var(--mute)">' +
+        '<p class="mute" style="margin:0">' +
+        '👁️ Accès en lecture seule pour ce module : consultation uniquement, aucune saisie.' +
+        '</p>' +
+        '</div>'
+      );
+    }
+
+  }
+
+};
+
+// ---------------------------------------------------------
+// Démarrage de l'authentification Firebase
+// ---------------------------------------------------------
+initFirebaseAuth();
+
 })();
 // ---- page d'aide : guide d'utilisation ----
 (()=>{
