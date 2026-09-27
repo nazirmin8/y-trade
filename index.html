@@ -2378,7 +2378,16 @@ save();toast('✅ Objectifs enregistrés');render();
         }
       },err=>{
         console.error('Messagerie temps réel:',err);
-        msgStatus='⚠️ Messagerie indisponible : vérifiez les règles Firestore.';
+        const code=err&&err.code||'';
+        if(code==='permission-denied'){
+          msgStatus='🔒 Accès Firestore refusé pour la messagerie. Publiez la règle companies/y-trade/messages.';
+        }else if(code==='unauthenticated'){
+          msgStatus='🔐 Session Firebase expirée. Reconnectez-vous.';
+        }else if(code==='unavailable'){
+          msgStatus='🌐 Firestore temporairement indisponible. Vérifiez Internet.';
+        }else{
+          msgStatus='⚠️ Erreur Firestore dans la messagerie : '+(err&&err.message?err.message:'erreur inconnue');
+        }
         updateMsgBadge();
         if(ui.v==='msg')render();
       });
@@ -2424,7 +2433,16 @@ save();toast('✅ Objectifs enregistrés');render();
       toast('📨 Message envoyé');
     }catch(err){
       console.error('Envoi message:',err);
-      toast('❌ Envoi impossible. Vérifiez les règles Firestore.');
+      const code=err&&err.code||'';
+      if(code==='permission-denied'){
+        toast('🔒 Envoi refusé par Firestore : publiez la règle de la messagerie.');
+      }else if(code==='unauthenticated'){
+        toast('🔐 Session Firebase expirée. Reconnectez-vous.');
+      }else if(code==='unavailable'){
+        toast('🌐 Firestore temporairement indisponible.');
+      }else{
+        toast('❌ Envoi impossible. '+(err&&err.message?err.message:'Erreur inconnue'));
+      }
     }finally{
       if(btn){btn.disabled=false;btn.textContent='📨 Envoyer'}
       if(ta)ta.focus();
