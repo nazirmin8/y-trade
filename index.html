@@ -134,6 +134,10 @@ window.yTradeFirebase = {
 };
 
 console.log("🔥 Firebase Y-TRADE connecté");
+ 
+window.dispatchEvent(
+  new Event('ytrade-firebase-ready')
+);
 </script>
 <script>
 // ---- squelette d'origine (pour la sauvegarde HTML complète)
@@ -1682,7 +1686,21 @@ render=function(){
 // ---------------------------------------------------------
 // Démarrage de l'authentification Firebase
 // ---------------------------------------------------------
-initFirebaseAuth();
+if(window.yTradeFirebase){
+
+  initFirebaseAuth();
+
+}else{
+
+  window.addEventListener(
+    'ytrade-firebase-ready',
+    ()=>{
+      initFirebaseAuth();
+    },
+    {once:true}
+  );
+
+}
 
 })();
 // ---- page d'aide : guide d'utilisation ----
