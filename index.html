@@ -1154,39 +1154,16 @@ document.addEventListener('click',async e=>{
 
     try{
 
-      const cred=
-        await f.signInWithEmailAndPassword(
-          f.auth,
-          email,
-          password
-        );
-
-const ok=await loadFirebaseProfile(cred.user);
-
-fbReady=true;
-
-if(!ok){
-  b.disabled=false;
-  b.textContent='🔓 Se connecter';
-  return;
-}
-
-      try{
-        sessionStorage.setItem(
-          'yt_sess',
-          cred.user.uid
-        );
-      }catch(e){}
-
-      ui.v=DEFV[fbProfile.role]||'dash';
-      ui.arm='';
-
-      toast(
-        '✅ Bienvenue, '+
-        (fbProfile.name||cred.user.email)
+      await f.signInWithEmailAndPassword(
+        f.auth,
+        email,
+        password
       );
 
-      render();
+      // Le profil Firestore et l'affichage sont gérés
+      // exclusivement par onAuthStateChanged().
+      // Cela évite un double chargement du profil.
+      toast('🔐 Authentification Firebase réussie.');
 
     }catch(err){
 
@@ -1221,19 +1198,9 @@ if(!ok){
 
       await f.signOut(f.auth);
 
-      fbUser=null;
-      fbProfile=null;
-
-      try{
-        sessionStorage.removeItem('yt_sess');
-      }catch(e){}
-
-      ui.v='dash';
-      ui.arm='';
-
+      // onAuthStateChanged() nettoie l'état et réaffiche
+      // automatiquement l'écran de connexion.
       toast('👋 Déconnexion réussie');
-
-      render();
 
     }catch(err){
 
@@ -1447,6 +1414,7 @@ render=function(){
   // -------------------------------------------------------
   if(!fbUser || !fbProfile){
 
+    $('#sb').textContent='☁️ Firebase';
     $('#main').innerHTML=loginPanel();
 
     $('#nav').style.opacity='.35';
@@ -1487,6 +1455,8 @@ render=function(){
 
   $('#nav').style.opacity='';
   $('#nav').style.pointerEvents='';
+
+  $('#sb').textContent='☁️ Firebase';
 
   $('#rb').textContent=
     '👤 '+
@@ -1727,8 +1697,12 @@ V.aide=()=>`<p class="mute">Ce guide explique le fonctionnement de chaque module
 // ---- accès lecture seule sans mot de passe (dashboard, compte de résultat, rapport de direction) ----
 (()=>{
 const GV=['dash','pnl','dir','aide'];
-let gst=false;try{gst=sessionStorage.getItem('yt_guest')=='1'}catch(e){}
-const guest=()=>gst,setGuest=v=>{gst=v;try{v?sessionStorage.setItem('yt_guest','1'):sessionStorage.removeItem('yt_guest')}catch(e){}};
+// Le mode lecture seule doit être activé uniquement par une action explicite.
+// Il n'est volontairement pas conservé dans sessionStorage afin qu'une
+// nouvelle ouverture de l'application revienne toujours au mode normal.
+let gst=false;
+const guest=()=>gst;
+const setGuest=v=>{gst=!!v};
 $('header span').insertAdjacentHTML('beforeend','<button class="ghost" id="gbtn" data-guest="1" title="Accès lecture seule : tableau de bord, compte de résultat et rapport de direction, sans mot de passe">👁️ Lecture seule</button><button class="ghost" id="gquit" data-gquit="1" style="display:none" title="Quitter le mode lecture seule">✖️ Quitter la lecture seule</button>');
 document.addEventListener('click',e=>{const b=e.target.closest('[data-guest],[data-gquit]');if(!b)return;
 if(b.dataset.guest){setGuest(true);toast('👁️ Mode lecture seule activé')}else{setGuest(false);toast('Mode lecture seule désactivé')}
